@@ -27,4 +27,10 @@ def GFSwitchBarFoo: Pass<"gf-switch-bar-foo", "::mlir::ModuleOp"> {
   }];
 }
 
+def ConvertGFToArith : Pass<"convert-gf-to-arith"> {
+  let summary = "Lower GF dialect ops to Arith dialect";
+  let constructor = "mlir::gf::createConvertGFToArithPass()";
+  let dependentDialects = ["arith::ArithDialect"];
+}
+
 #endif // GF_PASS

@@ -18,6 +18,8 @@ namespace gf {
 #define GEN_PASS_DECL
 #include "GF/GFPasses.h.inc"
 
+std::unique_ptr<Pass> createConvertGFToArithPass();
+
 #define GEN_PASS_REGISTRATION
 #include "GF/GFPasses.h.inc"
 } // namespace gf
