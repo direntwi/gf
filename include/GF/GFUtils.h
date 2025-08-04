@@ -51,6 +51,18 @@ inline constexpr llvm::StringLiteral kSBoxLookupTable = R"mlir(
 }
 )mlir";
 
+inline constexpr llvm::StringLiteral kAESMixColumnsMatrix = R"mlir(
+  builtin.module {
+  memref.global "private" constant @aes_mix_columns_matrix: memref<16xi8> =
+    dense<[
+    0x02, 0x03, 0x01, 0x01,
+    0x01, 0x02, 0x03, 0x01,
+    0x01, 0x01, 0x02, 0x03,
+    0x03, 0x01, 0x01, 0x02
+  ]>
+}
+)mlir";
+
 // Allocates a 1D memref<i8> and stores the given values into it.
 inline Value materializeMemref(Location loc, PatternRewriter &rewriter, ArrayRef<Value> values) {
   auto memType = MemRefType::get({(int64_t)values.size()}, rewriter.getI8Type());

@@ -120,6 +120,7 @@ def GF_MatMulOp : GF_Op<"matmul", [AttrSizedOperandSegments]> {
 //===----------------------------------------------------------------------===//
 // SBoxOp
 //===----------------------------------------------------------------------===//
+
 def GF_SBoxOp : GF_Op<"sbox", [Pure]> {
     let summary = "AES S‑Box byte substitution in GF(2^8)";
     let description = [{
@@ -131,6 +132,25 @@ def GF_SBoxOp : GF_Op<"sbox", [Pure]> {
     let results = (outs I8:$res);
     let hasVerifier = 1;
     let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+
+//===----------------------------------------------------------------------===//
+// MixColumnsOp
+//===----------------------------------------------------------------------===//
+
+def GF_MixColumnsOp : GF_Op<"mix_columns", []> {
+    let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
+    let description = [{
+        Given a column in memory (4 bytes), performs MixColumns transformation
+        and stores the result in the output column memref.
+    }];
+
+    let arguments = (ins
+        MemRefOf<[I8]>:$col, // Input column (4 bytes)
+        MemRefOf<[I8]>:$out // Output column (4 bytes)
+    );
+    let hasVerifier = 1;
+    let assemblyFormat = "$col `into` $out attr-dict `:` type($col) `,` type($out)";
 }
 
 #endif // GF_OPS
