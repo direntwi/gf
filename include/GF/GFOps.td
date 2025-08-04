@@ -40,6 +40,10 @@ def GF_FooOp : GF_Op<"foo", [Pure,
     }];
 }
 
+//===----------------------------------------------------------------------===//
+// AddOp
+//===----------------------------------------------------------------------===//
+
 def GF_AddOp : GF_Op<"add", [Pure]> {
     let summary = "Addition in GF(2^8) using XOR.";
     let description = [{}];
@@ -47,6 +51,39 @@ def GF_AddOp : GF_Op<"add", [Pure]> {
     let arguments = (ins I8:$lhs, I8:$rhs);
     let results = (outs I8:$res);
     let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
+//===----------------------------------------------------------------------===//
+// MulOp
+//===----------------------------------------------------------------------===//
+
+def GF_MulOp : GF_Op<"mul", [Pure]> {
+    let summary = "Multiplication in GF(2^8)";
+    let description = [{
+        Performs multiplication in GF(2^8) via log/antilog table lookups.
+        The op takes two GF field elements and produces a GF field element result.
+    }];
+    let hasVerifier = 1;
+    let arguments = (ins I8:$lhs, I8:$rhs);
+    let results = (outs I8:$res);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
+//===----------------------------------------------------------------------===//
+// InvOp
+//===----------------------------------------------------------------------===//
+
+def GF_InvOp : GF_Op<"inv", [Pure]> {
+    let summary = "Multiplicative inverse in GF(2^8)";
+    let description = [{
+        Computes the multiplicative inverse of a non‑zero GF(2^8) element
+        by performing a log lookup, subtracting from 255, then doing an antilog lookup.
+    }];
+
+    let arguments = (ins I8:$input);
+    let results = (outs I8:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 
 #endif // GF_OPS
