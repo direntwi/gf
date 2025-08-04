@@ -15,4 +15,6 @@ add_mlir_dialect_library(MLIRGF
         MLIRIR
         MLIRInferTypeOpInterface
         MLIRFuncDialect
+        MLIRFuncAllExtensions
+        MLIRTensorAllExtensions #only added because we registered all extensions in gf-opt.cpp
         )
