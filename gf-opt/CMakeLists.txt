@@ -6,6 +6,7 @@ set(LIBS
         MLIRArithDialect
         MLIROptLib
         MLIRGF
+        MLIRConvertToLLVMPass
         )
 add_llvm_executable(gf-opt gf-opt.cpp)
 
