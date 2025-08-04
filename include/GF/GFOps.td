@@ -86,4 +86,35 @@ def GF_InvOp : GF_Op<"inv", [Pure]> {
     let assemblyFormat = "$input attr-dict `:` type($res)";
 }
 
+//===----------------------------------------------------------------------===//
+// MatMulOp
+//===----------------------------------------------------------------------===//
+
+def GF_MatMulOp : GF_Op<"matmul", [AttrSizedOperandSegments]> {
+    let summary = "Matrix multiplication in GF(2^8)";
+    let description = [{
+        Given A ∈ GF(2^8)^(M×K) and B ∈ GF(2^8)^(K×N), computes
+        C = A · B   with C stored in the provided output MemRef.
+        Inputs are flattened row-major lists.
+    }];
+
+    let arguments = (ins
+        Variadic<AnyTypeOf<[I8, MemRefOf<[I8]>]>>:$lhs,
+        Variadic<AnyTypeOf<[I8, MemRefOf<[I8]>]>>:$rhs,
+        MemRefOf<[I8]>:$output,
+        I8Attr:$rowsA,
+        I8Attr:$colsA,
+        I8Attr:$colsB
+    );
+
+    let assemblyFormat = [{
+        `[` $lhs `:` type($lhs) `]`
+        `by`
+        `[` $rhs `:` type($rhs) `]`
+        `into` $output attr-dict `:` type($output)
+    }];
+
+    let hasVerifier = 1;
+}
+
 #endif // GF_OPS
