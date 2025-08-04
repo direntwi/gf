@@ -53,7 +53,7 @@ public:
 } // namespace
 
 //===----------------------------------------------------------------------===//
-// GFAddOpLowering
+// AddOp
 //===----------------------------------------------------------------------===//
 
 struct GFAddOpLowering : public OpRewritePattern<gf::AddOp> {
@@ -74,7 +74,7 @@ struct GFAddOpLowering : public OpRewritePattern<gf::AddOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// GFMulOpLowering
+// MulOp
 //===----------------------------------------------------------------------===//
 
 struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
@@ -196,7 +196,7 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
   };
 
 //===----------------------------------------------------------------------===//
-// GFInvOpLowering
+// InvOp
 //===----------------------------------------------------------------------===//
 
 struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
@@ -274,7 +274,7 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
 };
 
 //===----------------------------------------------------------------------===//
-// MatMulOpLowering
+// MatMulOp
 //===----------------------------------------------------------------------===//
 
 struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
@@ -358,6 +358,62 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// SBoxOp
+//===----------------------------------------------------------------------===//
+
+struct GFSBoxOpLowering : public OpRewritePattern<gf::SBoxOp> {
+  using OpRewritePattern<gf::SBoxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::SBoxOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+
+    // 1) Ensure sbox_table is in the module:
+    using GlobalOp = memref::GlobalOp;
+
+    // 1) Inject lookup‑table if missing
+    if (!module.lookupSymbol<GlobalOp>("sbox_table")) {
+      auto lookupM = parseSourceString<ModuleOp>(
+          kSBoxLookupTable, rewriter.getContext());
+      if (!lookupM) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : lookupM->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
+
+    // 2) Get the memref:
+    Value tableMemref = rewriter.create<memref::GetGlobalOp>(
+      loc,
+      MemRefType::get({256}, rewriter.getI8Type()),
+      "sbox_table"
+    );
+
+    // 3) Cast the input byte to index:
+    Value idx = rewriter.create<arith::IndexCastOp>(
+      loc,
+      rewriter.getIndexType(),
+      op.getInput()
+    );
+
+    // 4) Load the substituted value:
+    Value out = rewriter.create<memref::LoadOp>(
+      loc,
+      tableMemref,
+      idx
+    );
+
+    rewriter.replaceOp(op, out);
+    return success();
+  }
+};
+
 
 //===----------------------------------------------------------------------===//
 // ConvertGFToArithPass
@@ -386,7 +442,8 @@ struct ConvertGFToArithPass
     GFAddOpLowering, 
     GFMulOpLowering,
     GFInvOpLowering,
-    GFMatMulOpLowering>(&getContext());
+    GFMatMulOpLowering,
+    GFSBoxOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
