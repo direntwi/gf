@@ -117,4 +117,20 @@ def GF_MatMulOp : GF_Op<"matmul", [AttrSizedOperandSegments]> {
     let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// SBoxOp
+//===----------------------------------------------------------------------===//
+def GF_SBoxOp : GF_Op<"sbox", [Pure]> {
+    let summary = "AES S‑Box byte substitution in GF(2^8)";
+    let description = [{
+        Replaces an input byte x with SBox[x], where SBox is the
+        standard 256‑entry AES substitution box.
+    }];
+
+    let arguments = (ins I8:$input);
+    let results = (outs I8:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+
 #endif // GF_OPS
