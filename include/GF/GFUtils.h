@@ -4,7 +4,7 @@
 #include "llvm/ADT/StringRef.h"
 
 namespace mlir::gf {
-  inline constexpr llvm::StringLiteral kLogAntilogTables = R"mlir(
+inline constexpr llvm::StringLiteral kLogAntilogTables = R"mlir(
   builtin.module {
   memref.global "public" constant @log_table: memref<255xi8> =
     dense<[0, 25, 1, 50, 2, 26, 198, 75, 199, 27, 104, 51, 238, 223, 3, 100, 4, 224, 14, 52, 141, 129, 239, 76, 113, 8, 200, 248, 105, 28, 193, 125, 194, 29, 181, 249, 
@@ -26,6 +26,18 @@ namespace mlir::gf {
     
 }
 )mlir";
+
+// Allocates a 1D memref<i8> and stores the given values into it.
+inline Value materializeMemref(Location loc, PatternRewriter &rewriter, ArrayRef<Value> values) {
+  auto memType = MemRefType::get({(int64_t)values.size()}, rewriter.getI8Type());
+  Value mem = rewriter.create<memref::AllocOp>(loc, memType);
+
+  for (auto [idx, v] : llvm::enumerate(values)) {
+    Value cIdx = rewriter.create<arith::ConstantIndexOp>(loc, idx);
+    rewriter.create<memref::StoreOp>(loc, v, mem, ValueRange{cIdx});
+  }
+  return mem;
+  }
 } // namespace gf
 
 #endif // GF_UTILS_H
