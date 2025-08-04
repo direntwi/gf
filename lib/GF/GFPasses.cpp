@@ -414,6 +414,64 @@ struct GFSBoxOpLowering : public OpRewritePattern<gf::SBoxOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// MixColumnsOp
+//===----------------------------------------------------------------------===//
+
+struct GFMixColumnsOpLowering : public OpRewritePattern<gf::MixColumnsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::MixColumnsOp op,
+                              PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value colMemRef = op.getCol();
+    Value outMemRef = op.getOut();
+
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
+
+    using GlobalOp = memref::GlobalOp;
+
+    if (!module.lookupSymbol<GlobalOp>("aes_mix_columns_matrix")) {
+      auto matrixModule = parseSourceString<ModuleOp>(
+          kAESMixColumnsMatrix, rewriter.getContext());
+      if (!matrixModule) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : matrixModule->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
+
+    // Load matrix reference
+    Value mat = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({16}, rewriter.getI8Type()), "aes_mix_columns_matrix");
+
+    // Load column values
+    SmallVector<Value> colValues;
+    for (int i = 0; i < 4; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      colValues.push_back(rewriter.create<memref::LoadOp>(loc, colMemRef, idx));
+    }
+
+    // Call MatMul
+    rewriter.create<gf::MatMulOp>(
+        loc,
+        /*lhs=*/ValueRange{mat},
+        /*rhs=*/colValues,
+        /*output=*/outMemRef,
+        rewriter.getI8IntegerAttr(4),
+        rewriter.getI8IntegerAttr(4),
+        rewriter.getI8IntegerAttr(1));
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // ConvertGFToArithPass
@@ -443,7 +501,8 @@ struct ConvertGFToArithPass
     GFMulOpLowering,
     GFInvOpLowering,
     GFMatMulOpLowering,
-    GFSBoxOpLowering>(&getContext());
+    GFSBoxOpLowering,
+    GFMixColumnsOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
