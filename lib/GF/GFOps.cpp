@@ -161,3 +161,32 @@ LogicalResult SBoxOp::verify() {
     }
     return success();
 }
+
+//===----------------------------------------------------------------------===//
+// MixColumnsOp
+//===----------------------------------------------------------------------===//
+LogicalResult MixColumnsOp::verify() {
+  // Get operands
+  auto colMemRef = getCol();
+  auto outMemRef = getOut();
+
+  // Both must be memref<4xi8>
+  auto colType = mlir::dyn_cast<MemRefType>(colMemRef.getType());
+  auto outType = mlir::dyn_cast<MemRefType>(outMemRef.getType());
+
+  if (!colType || !colType.getElementType().isInteger(8) || colType.getNumElements() != 4)
+    return emitOpError("col operand must be memref<4xi8>");
+
+  if (!outType || !outType.getElementType().isInteger(8) || outType.getNumElements() != 4)
+    return emitOpError("out operand must be memref<4xi8>");
+
+  for (auto val : getOperands()) {
+    if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+      if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        if (intVal.getInt() < 0 || intVal.getInt() > 255)
+          return emitOpError("all constant input values must be in [0, 255]");
+  }
+
+  return success();
+}
+
