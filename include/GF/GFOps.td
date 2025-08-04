@@ -40,4 +40,13 @@ def GF_FooOp : GF_Op<"foo", [Pure,
     }];
 }
 
+def GF_AddOp : GF_Op<"add", [Pure]> {
+    let summary = "Addition in GF(2^8) using XOR.";
+    let description = [{}];
+    let hasVerifier = 1;
+    let arguments = (ins I8:$lhs, I8:$rhs);
+    let results = (outs I8:$res);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($res)";
+}
+
 #endif // GF_OPS

@@ -8,6 +8,29 @@
 
 #include "GF/GFOps.h"
 #include "GF/GFDialect.h"
+#include "mlir/IR/Matchers.h"
 
 #define GET_OP_CLASSES
 #include "GF/GFOps.cpp.inc"
+
+using namespace mlir;
+using namespace mlir::gf;
+
+
+LogicalResult AddOp::verify() {   
+    auto checkOperand = [&](Value operand) -> LogicalResult {
+        IntegerAttr value;
+        if (matchPattern(operand, m_Constant(&value))) {
+            int64_t val = value.getValue().getSExtValue();
+            if (val < 0 || val > 255) {
+                return emitOpError()
+                    << "operand value " << val << " out of range [0,255]";
+            }
+        }
+        return success();
+    };
+    if (failed(checkOperand(getLhs())) || failed(checkOperand(getRhs()))) {
+        return failure();
+    }
+    return success();
+}
