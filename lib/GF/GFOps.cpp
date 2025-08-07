@@ -222,3 +222,26 @@ LogicalResult KeyScheduleOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// AddRoundKeyOp
+//===----------------------------------------------------------------------===//  
+
+LogicalResult AddRoundKeyOp::verify() {
+  // Get operands
+  auto state = getState();
+  auto roundKey = getRoundKey();
+
+  // Both must be memref<16xi8>
+  auto stateType = mlir::dyn_cast<MemRefType>(state.getType());
+  auto roundKeyType = mlir::dyn_cast<MemRefType>(roundKey.getType());
+
+
+  if (stateType.getShape().size() != 1 || stateType.getShape()[0] != 16)
+    return emitOpError("state must be memref<16xi8>");
+
+  if (roundKeyType.getShape().size() != 1 || roundKeyType.getShape()[0] != 16)
+    return emitOpError("round key must be memref<16xi8>");
+
+  return success();
+}
