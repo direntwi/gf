@@ -63,6 +63,13 @@ inline constexpr llvm::StringLiteral kAESMixColumnsMatrix = R"mlir(
 }
 )mlir";
 
+inline constexpr llvm::StringLiteral kAESRcon = R"mlir(
+  builtin.module {
+  memref.global "private" constant @aes_rcon : memref<11xi8> = 
+  dense<[0, 1, 2, 4, 8, 16, 32, 64, 128, 27, 54]>
+}
+)mlir";
+
 // Allocates a 1D memref<i8> and stores the given values into it.
 inline Value materializeMemref(Location loc, PatternRewriter &rewriter, ArrayRef<Value> values) {
   auto memType = MemRefType::get({(int64_t)values.size()}, rewriter.getI8Type());
