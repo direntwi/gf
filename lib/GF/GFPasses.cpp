@@ -11,6 +11,7 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Conversion/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -105,92 +106,81 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
         }
       }
 
-    auto logSymAttr = SymbolRefAttr::get(rewriter.getContext(), "log_table");
-    auto antiSymAttr = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
+     // --- Fetch and widen operands to i32
+    Value lhs8 = op.getLhs();
+    Value rhs8 = op.getRhs();
+    Value lhs32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), lhs8);
+    Value rhs32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), rhs8);
 
-    // --- 2) Prepare constants
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 8);
-    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 8);
+    // --- Constants in i32
+    Value zero32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value one32  = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
 
-    // --- 3) Fetch operands
-    Value lhs = op.getLhs();
-    Value rhs = op.getRhs();
-
-    // --- 4) Early checks: zero or one
+    // --- Early checks in i32
     Value lhsIsZero = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, lhs, zero);
+        loc, arith::CmpIPredicate::eq, lhs32, zero32);
     Value rhsIsZero = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, rhs, zero);
+        loc, arith::CmpIPredicate::eq, rhs32, zero32);
     Value eitherZero = rewriter.create<arith::OrIOp>(loc, lhsIsZero, rhsIsZero);
-
     Value lhsIsOne = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, lhs, one);
+        loc, arith::CmpIPredicate::eq, lhs32, one32);
     Value rhsIsOne = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, rhs, one);
+        loc, arith::CmpIPredicate::eq, rhs32, one32);
 
-    // --- 5) Precompute result for early cases
-    // If lhs == 1 -> rhs
-    // Else if rhs == 1 -> lhs
-    // Else 0
-    Value partialResult = rewriter.create<arith::SelectOp>(
-        loc, lhsIsOne, rhs,
-        rewriter.create<arith::SelectOp>(
-            loc, rhsIsOne, lhs, zero));
+    // --- Partial result for early cases (i32)
+    Value partialResult32 = rewriter.create<arith::SelectOp>(
+        loc, lhsIsOne, rhs32,
+        rewriter.create<arith::SelectOp>(loc, rhsIsOne, lhs32, zero32));
 
-    // --- 6) Did we hit any early exit? (eitherZero OR lhsIsOne OR rhsIsOne)
     Value anyEarly1 = rewriter.create<arith::OrIOp>(loc, eitherZero, lhsIsOne);
-    Value anyEarly = rewriter.create<arith::OrIOp>(loc, anyEarly1, rhsIsOne);
+    Value anyEarly  = rewriter.create<arith::OrIOp>(loc, anyEarly1, rhsIsOne);
 
-    // --- 7) Prepare index adjustment for log lookup (subtract 1)
-    // (only used if anyEarly == false)
-    Value oneI8 = one;
-    Value lhsAdj = rewriter.create<arith::SubIOp>(loc, lhs, oneI8);
-    Value rhsAdj = rewriter.create<arith::SubIOp>(loc, rhs, oneI8);
+    // --- Adjust indices for table lookup (i32)
+    Value lhsAdj = rewriter.create<arith::SubIOp>(loc, lhs32, one32);
+    Value rhsAdj = rewriter.create<arith::SubIOp>(loc, rhs32, one32);
+    Value lhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), lhsAdj);
+    Value rhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), rhsAdj);
 
-    Value lhsIdx = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), lhsAdj);
-    Value rhsIdx = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), rhsAdj);
-
-    // --- 8) Load tables
+    // --- Load tables (i8) and widen to i32
     auto i8Ty = rewriter.getIntegerType(8);
-    auto logMemrefTy = MemRefType::get({255}, i8Ty);
-    auto antiMemrefTy = MemRefType::get({255}, i8Ty);
+    Value logTable = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({255}, i8Ty),
+        SymbolRefAttr::get(rewriter.getContext(), "log_table"));
+    Value antiTable = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({255}, i8Ty),
+        SymbolRefAttr::get(rewriter.getContext(), "antilog_table"));
 
-    Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
-        loc, logMemrefTy, logSymAttr);
-    Value antilogTablePtr = rewriter.create<memref::GetGlobalOp>(
-        loc, antiMemrefTy, antiSymAttr);
+    Value dummyLog8 = rewriter.create<arith::ConstantIntOp>(loc, 0, 8);
+    Value logVal8L = rewriter.create<arith::SelectOp>(
+        loc, anyEarly,
+        dummyLog8,
+        rewriter.create<memref::LoadOp>(loc, logTable, lhsIdx));
+    Value logVal8R = rewriter.create<arith::SelectOp>(
+        loc, anyEarly,
+        dummyLog8,
+        rewriter.create<memref::LoadOp>(loc, logTable, rhsIdx));
+    Value logValL = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), logVal8L);
+  Value logValR = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), logVal8R);
 
-    // --- 9) Conditionally load log values (safe dummy 0 if early)
-    Value dummyLog = zero;
-    Value logValLhs = rewriter.create<arith::SelectOp>(
-        loc, anyEarly, dummyLog,
-        rewriter.create<memref::LoadOp>(loc, logTablePtr, lhsIdx));
-    Value logValRhs = rewriter.create<arith::SelectOp>(
-        loc, anyEarly, dummyLog,
-        rewriter.create<memref::LoadOp>(loc, logTablePtr, rhsIdx));
+    // --- Sum logs and mod 255 (i32)
+    Value logSum = rewriter.create<arith::AddIOp>(loc, logValL, logValR);
+    Value modConst32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+    Value modSum = rewriter.create<arith::RemUIOp>(loc, logSum, modConst32);
 
-    // --- 10) Sum logs and mod 255
-    Value logSum = rewriter.create<arith::AddIOp>(loc, logValLhs, logValRhs);
-    Value modConst = rewriter.create<arith::ConstantIntOp>(loc, 255, 8);
-    Value modSum = rewriter.create<arith::RemUIOp>(loc, logSum, modConst);
+    // --- Antilog lookup
+    Value modIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), modSum);
+    Value prodVal8 = rewriter.create<arith::SelectOp>(
+        loc, anyEarly,
+        dummyLog8,
+        rewriter.create<memref::LoadOp>(loc, antiTable, modIdx));
+    Value prodVal32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), prodVal8);
 
-    // --- 11) Index cast for antilog lookup
-    Value modIdx = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), modSum);
+    // --- Final select and truncate to i8
+    Value final32 = rewriter.create<arith::SelectOp>(loc, anyEarly,
+                                                   partialResult32, prodVal32);
+    Value final8 = rewriter.create<arith::TruncIOp>(loc, rewriter.getI8Type(), final32);
 
-    // --- 12) Load antilog value (safe dummy 0 if early)
-    Value prodVal = rewriter.create<arith::SelectOp>(
-        loc, anyEarly, zero,
-        rewriter.create<memref::LoadOp>(loc, antilogTablePtr, modIdx));
-
-    // --- 13) If early, return partialResult; else return prodVal
-    Value finalResult = rewriter.create<arith::SelectOp>(
-        loc, anyEarly, partialResult, prodVal);
-
-    // --- 14) Replace op
-    rewriter.replaceOp(op, finalResult);
+    rewriter.replaceOp(op, final8);
     return success();
     }
   };
@@ -226,49 +216,57 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
       }
     }
 
-    auto logSymAttr = SymbolRefAttr::get(rewriter.getContext(), "log_table");
-    auto antiSymAttr = SymbolRefAttr::get(rewriter.getContext(), "antilog_table");
+    // --- 2) Load input and widen to i32
+    Value in8   = op.getOperand();
+    Value in32  = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), in8);
 
-    // --- 2) Constants
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 8);
-    Value one = rewriter.create<arith::ConstantIntOp>(loc, 1, 8);
-    Value c255 = rewriter.create<arith::ConstantIntOp>(loc, 255, 8);
+    // --- 3) Constants in i32
+    Value zero32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value one32  = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
+    Value c255_32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
 
-    // --- 3) Zero check
-    Value in = op.getOperand();
+    // --- 4) Zero check
     Value isZero = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, in, zero);
+        loc, arith::CmpIPredicate::eq, in32, zero32);
 
-    // --- 4) Adjust index for log lookup (subtract 1)
-    Value inAdj = rewriter.create<arith::SubIOp>(loc, in, one);
-    Value inIdx = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), inAdj);
+    // --- 5) Compute index = (255 - logVal) mod 255
+    // Subtract 1 for table index: idx = in32 - 1
+    Value inAdj32 = rewriter.create<arith::SubIOp>(loc, in32, one32);
+    // Cast to Index for table load
+    Value inIdx = rewriter.create<arith::IndexCastOp>(loc,
+        rewriter.getIndexType(), inAdj32);
 
-    // --- 5) Load from log_table
+    // Load log table entry (i8) and widen
     auto i8Ty = rewriter.getIntegerType(8);
-    auto logMemrefTy = MemRefType::get({255}, i8Ty);
-    Value logTablePtr = rewriter.create<memref::GetGlobalOp>(
-        loc, logMemrefTy, logSymAttr);
-    Value logVal = rewriter.create<memref::LoadOp>(loc, logTablePtr, inIdx);
+    Value logTable = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({255}, i8Ty),
+        SymbolRefAttr::get(rewriter.getContext(), "log_table"));
+    Value log8 = rewriter.create<memref::LoadOp>(loc, logTable, inIdx);
+    Value log32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), log8);
 
-    // --- 6) Compute (255 - logVal) mod 255
-    Value diff = rewriter.create<arith::SubIOp>(loc, c255, logVal);
-    Value invIdxI8 = rewriter.create<arith::RemUIOp>(loc, diff, c255);
-    Value invIdx = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), invIdxI8);
+    // Compute diff = (255 - log32)
+    Value diff32 = rewriter.create<arith::SubIOp>(loc, c255_32, log32);
+    // Mod 255: invIdx32 = diff32 % 255
+    Value invIdx32 = rewriter.create<arith::RemUIOp>(loc, diff32, c255_32);
+    // Cast to Index for antilog lookup
+    Value invIdx = rewriter.create<arith::IndexCastOp>(loc,
+        rewriter.getIndexType(), invIdx32);
 
-    // --- 7) Load from antilog_table
-    auto antiMemrefTy = MemRefType::get({255}, i8Ty);
-    Value antiTablePtr = rewriter.create<memref::GetGlobalOp>(
-        loc, antiMemrefTy, antiSymAttr);
-    Value invVal = rewriter.create<memref::LoadOp>(loc, antiTablePtr, invIdx);
+    // Load anti-log entry (i8) and widen to i32
+    Value antiTable = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({255}, i8Ty),
+        SymbolRefAttr::get(rewriter.getContext(), "antilog_table"));
+    Value inv8 = rewriter.create<memref::LoadOp>(loc, antiTable, invIdx);
+    Value inv32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), inv8);
 
-    // --- 8) Select: if zero, return zero, else return invVal
-    Value result = rewriter.create<arith::SelectOp>(
-        loc, isZero, zero, invVal);
+    // --- 6) Select: if input was zero, result = zero; else result = inv32
+    Value result32 = rewriter.create<arith::SelectOp>(
+        loc, isZero, zero32, inv32);
 
-    // --- 9) Replace
-    rewriter.replaceOp(op, result);
+    // --- 7) Truncate back to i8 and replace
+    Value result8 = rewriter.create<arith::TruncIOp>(loc,
+        rewriter.getI8Type(), result32);
+    rewriter.replaceOp(op, result8);
     return success();
   }
 };
@@ -450,6 +448,10 @@ struct GFMixColumnsOpLowering : public OpRewritePattern<gf::MixColumnsOp> {
     // Load matrix reference
     Value mat = rewriter.create<memref::GetGlobalOp>(
         loc, MemRefType::get({16}, rewriter.getI8Type()), "aes_mix_columns_matrix");
+    
+    // Allocate temporary buffer for MatMul result (4 elements)
+    auto tmpType = MemRefType::get({4}, rewriter.getI8Type());
+    Value tmpResult = rewriter.create<memref::AllocaOp>(loc, tmpType);
 
     // Load column values
     SmallVector<Value> colValues;
@@ -463,10 +465,146 @@ struct GFMixColumnsOpLowering : public OpRewritePattern<gf::MixColumnsOp> {
         loc,
         /*lhs=*/ValueRange{mat},
         /*rhs=*/colValues,
-        /*output=*/outMemRef,
+        /*output=*/tmpResult,
         rewriter.getI8IntegerAttr(4),
         rewriter.getI8IntegerAttr(4),
         rewriter.getI8IntegerAttr(1));
+
+    // Mask and copy results into output memref
+    Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFF, 8);
+    for (int i = 0; i < 4; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value val = rewriter.create<memref::LoadOp>(loc, tmpResult, idx);
+      Value masked = rewriter.create<arith::AndIOp>(loc, val, mask);
+      rewriter.create<memref::StoreOp>(loc, masked, outMemRef, idx);
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// KeyScheduleOp
+//===----------------------------------------------------------------------===//
+
+struct GFKeyScheduleOpLowering : public OpRewritePattern<gf::KeyScheduleOp> {
+  using OpRewritePattern<gf::KeyScheduleOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::KeyScheduleOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value key = op.getKey();
+    Value schedule = op.getSchedule();
+
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
+
+    // Step 1: Copy initial key bytes (i8) directly
+    for (int i = 0; i < 16; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value byte = rewriter.create<memref::LoadOp>(loc, key, idx);
+      rewriter.create<memref::StoreOp>(loc, byte, schedule, idx);
+    }
+
+    // Step 2: Ensure RCON global exists
+    using GlobalOp = memref::GlobalOp;
+    if (!module.lookupSymbol<GlobalOp>("aes_rcon")) {
+      auto rconMod = parseSourceString<ModuleOp>(kAESRcon, rewriter.getContext());
+      if (!rconMod) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : rconMod->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
+    Value rconMem = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({11}, rewriter.getI8Type()), "aes_rcon");
+
+    Value c4  = rewriter.create<arith::ConstantIndexOp>(loc, 4);
+    Value c44 = rewriter.create<arith::ConstantIndexOp>(loc, 44);
+    Value c1  = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // Step 3: Loop for words 4..43
+    rewriter.create<scf::ForOp>(
+        loc, c4, c44, c1, ValueRange{},
+        [&](OpBuilder &b, Location l, Value iv, ValueRange) {
+          // Compute base index = iv * 4
+          Value base = b.create<arith::MulIOp>(l, iv,
+                           b.create<arith::ConstantIndexOp>(l, 4));
+
+          // Load previous words and widen to i32
+          SmallVector<Value> prev(4), prev4(4);
+          for (int j = 0; j < 4; ++j) {
+            Value idxPrev = b.create<arith::AddIOp>(l, base,
+                               b.create<arith::ConstantIndexOp>(l, j - 4));
+            Value v8Prev  = b.create<memref::LoadOp>(l, schedule, idxPrev);
+            prev[j]       = b.create<arith::ExtUIOp>(l, b.getI32Type(), v8Prev);
+
+            Value idxPrev4 = b.create<arith::AddIOp>(l, base,
+                                b.create<arith::ConstantIndexOp>(l, j - 16));
+            Value v8Prev4  = b.create<memref::LoadOp>(l, schedule, idxPrev4);
+            prev4[j]      = b.create<arith::ExtUIOp>(l, b.getI32Type(), v8Prev4);
+          }
+          SmallVector<Value> temp = prev;
+
+          // Condition: iv % 4 == 0
+          Value rem = b.create<arith::RemUIOp>(l, iv,
+                         b.create<arith::ConstantIndexOp>(l, 4));
+          Value doRcon = b.create<arith::CmpIOp>(
+                             l, arith::CmpIPredicate::eq, rem,
+                             b.create<arith::ConstantIndexOp>(l, 0));
+
+          // IF for RotWord+SubWord+RCON
+          auto ifOp = b.create<scf::IfOp>(
+              l, SmallVector<Type>(4, b.getI32Type()), doRcon, true);
+
+          // THEN branch
+          {
+            OpBuilder thenB = ifOp.getThenBodyBuilder();
+            // Rotate
+            SmallVector<Value> rot = {temp[1], temp[2], temp[3], temp[0]};
+            for (int k = 0; k < 4; ++k) {
+              // SBox returns i8, extend to i32
+              Value s8 = thenB.create<gf::SBoxOp>(l, rot[k]);
+              rot[k] = thenB.create<arith::ExtUIOp>(l, thenB.getI32Type(), s8);
+            }
+            // RCON
+            Value div4 = thenB.create<arith::DivUIOp>(l, iv,
+                             thenB.create<arith::ConstantIndexOp>(l, 4));
+            Value rc8 = thenB.create<memref::LoadOp>(l, rconMem, div4);
+            Value rc32 = thenB.create<arith::ExtUIOp>(l, thenB.getI32Type(), rc8);
+            // XOR
+            rot[0] = thenB.create<arith::XOrIOp>(l, rot[0], rc32);
+            thenB.create<scf::YieldOp>(l, rot);
+          }
+          // ELSE branch
+          {
+            OpBuilder elseB = ifOp.getElseBodyBuilder();
+            elseB.create<scf::YieldOp>(l, temp);
+          }
+          // Update temp
+          temp.assign(ifOp.getResults().begin(), ifOp.getResults().end());
+
+          // Compute newWord = temp ^ prev4
+          SmallVector<Value> newWord(4);
+          for (int k = 0; k < 4; ++k) {
+            newWord[k] = b.create<arith::XOrIOp>(l, temp[k], prev4[k]);
+          }
+
+          // Store newWord truncated to i8
+          for (int k = 0; k < 4; ++k) {
+            Value idx = b.create<arith::AddIOp>(l, base,
+                b.create<arith::ConstantIndexOp>(l, k));
+            Value t8  = b.create<arith::TruncIOp>(l, b.getI8Type(), newWord[k]);
+            b.create<memref::StoreOp>(l, t8, schedule, idx);
+          }
+          b.create<scf::YieldOp>(l);
+        });
 
     rewriter.eraseOp(op);
     return success();
@@ -488,12 +626,21 @@ struct ConvertGFToArithPass
   
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<arith::ArithDialect, memref::MemRefDialect, scf::SCFDialect>();
-
   }
 
   void runOnOperation() override {
     ConversionTarget target(getContext());
-    target.addLegalDialect<arith::ArithDialect, memref::MemRefDialect, scf::SCFDialect>();
+    target.addIllegalOp<gf::AddOp>();
+    target.addIllegalOp<gf::MulOp>();
+    target.addIllegalOp<gf::InvOp>();
+    target.addIllegalOp<gf::MatMulOp>();
+    target.addIllegalOp<gf::SBoxOp>();
+    target.addIllegalOp<gf::MixColumnsOp>();
+    target.addIllegalOp<gf::KeyScheduleOp>();
+    target.addIllegalDialect<gf::GFDialect>();
+    target.addLegalDialect<arith::ArithDialect>();
+    target.addLegalDialect<memref::MemRefDialect>();
+    target.addLegalDialect<scf::SCFDialect>();
 
     RewritePatternSet patterns(&getContext());
     patterns.add<
@@ -502,9 +649,21 @@ struct ConvertGFToArithPass
     GFInvOpLowering,
     GFMatMulOpLowering,
     GFSBoxOpLowering,
-    GFMixColumnsOpLowering>(&getContext());
+    GFMixColumnsOpLowering,
+    GFKeyScheduleOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
+      signalPassFailure();
+
+    RewritePatternSet nestedPatterns(&getContext());
+    nestedPatterns.add<GFSBoxOpLowering>(&getContext());
+    ConversionTarget nestedTarget(getContext());
+    nestedTarget.addIllegalOp<gf::SBoxOp>();
+    nestedTarget.addLegalDialect<arith::ArithDialect>();
+    nestedTarget.addLegalDialect<memref::MemRefDialect>();
+    nestedTarget.addLegalDialect<scf::SCFDialect>();
+
+    if (failed(applyPartialConversion(getOperation(), nestedTarget, std::move(nestedPatterns))))
       signalPassFailure();
   }
 };

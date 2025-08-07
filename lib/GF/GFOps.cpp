@@ -190,3 +190,35 @@ LogicalResult MixColumnsOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+//KeyScheduleOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult KeyScheduleOp::verify() {
+  auto keyType = dyn_cast<MemRefType>(getKey().getType());
+  auto schedType = dyn_cast<MemRefType>(getSchedule().getType());
+
+  if (!keyType || !schedType)
+    return emitOpError("expected memref types for key and schedule");
+
+  if (keyType.getShape().size() != 1 || keyType.getShape()[0] != 16)
+    return emitOpError("key must be memref<16xi8>");
+
+  if (schedType.getShape().size() != 1 || schedType.getShape()[0] != 176)
+    return emitOpError("schedule must be memref<176xi8>");
+
+  if (!keyType.getElementType().isInteger(8) || !schedType.getElementType().isInteger(8))
+    return emitOpError("key and schedule must have element type i8");
+
+  if (getKey() == getSchedule())
+    return emitOpError("key and schedule cannot be the same memref");
+
+  for (auto val : getOperands()) {
+    if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+      if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        if (intVal.getInt() < 0 || intVal.getInt() > 255)
+          return emitOpError("all constant input values must be in [0, 255]");
+  }
+
+  return success();
+}

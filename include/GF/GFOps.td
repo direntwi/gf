@@ -153,4 +153,24 @@ def GF_MixColumnsOp : GF_Op<"mix_columns", []> {
     let assemblyFormat = "$col `into` $out attr-dict `:` type($col) `,` type($out)";
 }
 
+//===----------------------------------------------------------------------===//
+// KeyScheduleOp
+//===----------------------------------------------------------------------===//
+
+def GF_KeyScheduleOp : GF_Op<"key_schedule", []> {
+    let summary = "AES-128 key schedule expansion";
+    let description = [{
+        Given an initial 16-byte AES key, generate the full expanded key schedule
+        (11 round keys × 16 bytes = 176 bytes) using scf loops.
+    }];
+
+    let arguments = (ins
+        MemRefOf<[I8]>:$key,       // Input key (16 bytes)
+        MemRefOf<[I8]>:$schedule   // Output key schedule (176 bytes)
+    );
+    let hasVerifier = 1;
+    let assemblyFormat = "$key `into` $schedule attr-dict `:` type($key) `,` type($schedule)";
+
+}
+
 #endif // GF_OPS
