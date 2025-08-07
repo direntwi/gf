@@ -612,6 +612,47 @@ struct GFKeyScheduleOpLowering : public OpRewritePattern<gf::KeyScheduleOp> {
 };
 
 //===----------------------------------------------------------------------===//
+// AddRoundKeyOp
+//===----------------------------------------------------------------------===//
+
+struct GFAddRoundKeyOpLowering : public OpRewritePattern<gf::AddRoundKeyOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::AddRoundKeyOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value state = op.getState();
+    Value roundKey = op.getRoundKey();
+
+    // 1. Define loop bounds
+    Value zero = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value sixteen = rewriter.create<arith::ConstantIndexOp>(loc, 16);
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+
+    // 2. Generate a loop over [0, 16)
+    rewriter.replaceOpWithNewOp<scf::ForOp>(
+        op, zero, sixteen, one, std::nullopt,
+        [&](OpBuilder &b, Location loc, Value iv, ValueRange /*args*/) {
+          // state[i]
+          Value sByte = b.create<memref::LoadOp>(loc, state, iv);
+          // roundKey[i]
+          Value kByte = b.create<memref::LoadOp>(loc, roundKey, iv);
+
+          // XOR using gf::AddOp
+          Value xored = b.create<gf::AddOp>(loc, sByte, kByte);
+
+          // store back into state[i]
+          b.create<memref::StoreOp>(loc, xored, state, iv);
+
+          b.create<scf::YieldOp>(loc);
+        });
+
+    return success();
+  }
+};
+
+
+//===----------------------------------------------------------------------===//
 // ConvertGFToArithPass
 //===----------------------------------------------------------------------===//
 
@@ -637,6 +678,7 @@ struct ConvertGFToArithPass
     target.addIllegalOp<gf::SBoxOp>();
     target.addIllegalOp<gf::MixColumnsOp>();
     target.addIllegalOp<gf::KeyScheduleOp>();
+    target.addIllegalOp<gf::AddRoundKeyOp>();
     target.addIllegalDialect<gf::GFDialect>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<memref::MemRefDialect>();
@@ -650,7 +692,8 @@ struct ConvertGFToArithPass
     GFMatMulOpLowering,
     GFSBoxOpLowering,
     GFMixColumnsOpLowering,
-    GFKeyScheduleOpLowering>(&getContext());
+    GFKeyScheduleOpLowering,
+    GFAddRoundKeyOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();

@@ -138,7 +138,7 @@ def GF_SBoxOp : GF_Op<"sbox", [Pure]> {
 // MixColumnsOp
 //===----------------------------------------------------------------------===//
 
-def GF_MixColumnsOp : GF_Op<"mix_columns", []> {
+def GF_MixColumnsOp : GF_Op<"mix_columns", [MemoryEffects<[MemRead, MemWrite]>]> {
     let summary = "AES MixColumns on a single 4-byte column in GF(2^8)";
     let description = [{
         Given a column in memory (4 bytes), performs MixColumns transformation
@@ -157,7 +157,7 @@ def GF_MixColumnsOp : GF_Op<"mix_columns", []> {
 // KeyScheduleOp
 //===----------------------------------------------------------------------===//
 
-def GF_KeyScheduleOp : GF_Op<"key_schedule", []> {
+def GF_KeyScheduleOp : GF_Op<"key_schedule", [MemoryEffects<[MemRead, MemWrite]>]> {
     let summary = "AES-128 key schedule expansion";
     let description = [{
         Given an initial 16-byte AES key, generate the full expanded key schedule
@@ -171,6 +171,24 @@ def GF_KeyScheduleOp : GF_Op<"key_schedule", []> {
     let hasVerifier = 1;
     let assemblyFormat = "$key `into` $schedule attr-dict `:` type($key) `,` type($schedule)";
 
+}
+//===----------------------------------------------------------------------===//
+// AddRoundKeyOp
+//===----------------------------------------------------------------------===//
+
+def GF_AddRoundKeyOp : GF_Op<"add_round_key", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "AES AddRoundKey operation (byte-wise XOR of state and round key)";
+  let description = [{
+    Performs state[i] = state[i] ⊕ roundKey[i] for 16 bytes.
+    Inputs and output are assumed to be memref<16xi8>.
+  }];
+
+  let arguments = (ins
+    MemRefOf<[I8]>:$state,
+    MemRefOf<[I8]>:$round_key
+  );
+  let hasVerifier = 1;
+  let assemblyFormat = "$state `,` $round_key  attr-dict `:` type($state) `,` type($round_key)";
 }
 
 #endif // GF_OPS
