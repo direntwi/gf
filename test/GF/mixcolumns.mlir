@@ -1,4 +1,5 @@
 module {
+  memref.global "public" @_dump_start : memref<16xi8>
   func.func @main() -> (i8) {
     // 1) Allocate memory for input and output states
     %state = memref.alloca() : memref<16xi8>
@@ -103,6 +104,13 @@ module {
       %val = memref.load %out[%j] : memref<16xi8>
       %new_acc = arith.xori %acc, %val : i8
       scf.yield %new_acc : i8
+    }
+
+    // After XOR loop
+    %dump = memref.get_global @_dump_start : memref<16xi8>
+    scf.for %k = %i0 to %r16 step %i1 {
+      %v = memref.load %out[%k] : memref<16xi8>
+      memref.store %v, %dump[%k] : memref<16xi8>
     }
 
     func.return %final : i8
