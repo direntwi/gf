@@ -245,3 +245,16 @@ LogicalResult AddRoundKeyOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// ShiftRowsOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ShiftRowsOp::verify() {
+  auto state = getState();
+  auto stateType = mlir::dyn_cast<MemRefType>(state.getType());
+  
+  if (stateType.getShape().size() != 1 || stateType.getShape()[0] != 16)
+    return emitOpError("state must be memref<16xi8>");
+  return success();
+}

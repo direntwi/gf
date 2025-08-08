@@ -191,4 +191,24 @@ def GF_AddRoundKeyOp : GF_Op<"add_round_key", [MemoryEffects<[MemRead, MemWrite]
   let assemblyFormat = "$state `,` $round_key  attr-dict `:` type($state) `,` type($round_key)";
 }
 
+//===----------------------------------------------------------------------===//
+// ShiftRowsOp
+//===----------------------------------------------------------------------===//
+
+def GF_ShiftRowsOp : GF_Op<"shift_rows", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "Performs AES ShiftRows on a 4x4 byte state";
+  let description = [{
+    This operation cyclically shifts the rows of the 4x4 AES state matrix:
+    - Row 0: no shift
+    - Row 1: left shift by 1
+    - Row 2: left shift by 2
+    - Row 3: left shift by 3
+  }];
+
+  let arguments = (ins MemRefOf<[I8]>:$state);
+  let hasVerifier = 1;
+  let assemblyFormat = "$state attr-dict `:` type($state)";
+}
+
+
 #endif // GF_OPS

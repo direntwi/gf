@@ -651,6 +651,81 @@ struct GFAddRoundKeyOpLowering : public OpRewritePattern<gf::AddRoundKeyOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// ShiftRowsOp
+//===----------------------------------------------------------------------===//
+
+struct GFShiftRowsOpLowering : OpRewritePattern<gf::ShiftRowsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::ShiftRowsOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value state = op.getState();
+
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
+
+    using GlobalOp = memref::GlobalOp;
+      if (!module.lookupSymbol<GlobalOp>("aes_shift_rows_matrix")) {
+        auto shiftmap = parseSourceString<ModuleOp>(kAESShiftRowsMatrix, rewriter.getContext());
+        if (!shiftmap) return failure();
+        
+        SymbolTable symtab(module);
+        for (auto glob : shiftmap->getOps<GlobalOp>()) {
+          if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+            OpBuilder::InsertionGuard guard(rewriter);
+            rewriter.setInsertionPointToEnd(module.getBody());
+            rewriter.clone(*glob.getOperation());
+          }
+        }
+      }
+
+
+    // Allocate temporary buffer: memref<16xi8>
+    auto memrefType = mlir::dyn_cast<MemRefType>(state.getType());
+    Value temp = rewriter.create<memref::AllocOp>(loc, memrefType);
+
+    // Load the global shift map
+    Value lut = rewriter.create<memref::GetGlobalOp>(
+        loc,
+        MemRefType::get({16}, rewriter.getI8Type()),
+        StringAttr::get(rewriter.getContext(), "aes_shift_rows_matrix"));
+
+    // Perform state[i] = state[shiftmap[i]]
+    for (int i = 0; i < 16; ++i) {
+      Value iC = rewriter.create<arith::ConstantIndexOp>(loc, i);
+
+      // mappedIndex = shiftmap[i]
+      Value mappedIndex = rewriter.create<memref::LoadOp>(loc, lut, iC);
+
+      // mappedIndex : i8 → index
+      Value mappedIndexIdx = rewriter.create<arith::IndexCastUIOp>(
+          loc, rewriter.getIndexType(), mappedIndex);
+
+      // val = state[shiftmap[i]]
+      Value val = rewriter.create<memref::LoadOp>(loc, state, mappedIndexIdx);
+
+      // temp[i] = val
+      rewriter.create<memref::StoreOp>(loc, val, temp, iC);
+    }
+
+    // Copy temp back to state
+    for (int i = 0; i < 16; ++i) {
+      Value iC = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      Value val = rewriter.create<memref::LoadOp>(loc, temp, iC);
+      rewriter.create<memref::StoreOp>(loc, val, state, iC);
+    }
+
+    // Dealloc temp
+    rewriter.create<memref::DeallocOp>(loc, temp);
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 
 //===----------------------------------------------------------------------===//
 // ConvertGFToArithPass
@@ -679,6 +754,7 @@ struct ConvertGFToArithPass
     target.addIllegalOp<gf::MixColumnsOp>();
     target.addIllegalOp<gf::KeyScheduleOp>();
     target.addIllegalOp<gf::AddRoundKeyOp>();
+    target.addIllegalOp<gf::ShiftRowsOp>();
     target.addIllegalDialect<gf::GFDialect>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<memref::MemRefDialect>();
@@ -693,7 +769,8 @@ struct ConvertGFToArithPass
     GFSBoxOpLowering,
     GFMixColumnsOpLowering,
     GFKeyScheduleOpLowering,
-    GFAddRoundKeyOpLowering>(&getContext());
+    GFAddRoundKeyOpLowering,
+    GFShiftRowsOpLowering>(&getContext());
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
