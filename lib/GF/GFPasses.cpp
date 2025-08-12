@@ -287,7 +287,7 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
     int64_t N = op.getColsB();
     auto operands = op.getOperands();
 
-     // --- LHS ---
+    // --- LHS (A: row-major) ---
     bool lhsIsMemref = mlir::isa<MemRefType>(operands[0].getType());
     int64_t numLhs = lhsIsMemref ? 1 : (M * K);
     Value memrefA = lhsIsMemref
@@ -295,59 +295,58 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
         : gf::materializeMemref(loc, rewriter,
               SmallVector<Value>(operands.begin(), operands.begin() + numLhs));
 
-    // --- RHS ---
+    // --- RHS (B: column-major) ---
     bool rhsIsMemref = mlir::isa<MemRefType>(operands[numLhs].getType());
     int64_t numRhs = rhsIsMemref ? 1 : (K * N);
     Value memrefB = rhsIsMemref
         ? operands[numLhs]
         : gf::materializeMemref(loc, rewriter,
-              SmallVector<Value>(operands.begin() + numLhs, operands.begin() + numLhs + numRhs));
+              SmallVector<Value>(operands.begin() + numLhs,
+                                 operands.begin() + numLhs + numRhs));
 
-    // --- Output ---
-    Value outputMemRef = operands[numLhs + numRhs];
+    // --- Output (C: column-major) ---
+    Value memrefC = operands[numLhs + numRhs];
 
-    // Loop constants
+    // --- Constants ---
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     auto cK = rewriter.create<arith::ConstantIndexOp>(loc, K);
-    auto cN = rewriter.create<arith::ConstantIndexOp>(loc, N);
+    auto cM = rewriter.create<arith::ConstantIndexOp>(loc, M);
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 8);
 
-    // Loop nest: i and j
+    // Unrolled i,j with a k-loop
     for (int64_t i = 0; i < M; ++i) {
       Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
-
       for (int64_t j = 0; j < N; ++j) {
         Value jVal = rewriter.create<arith::ConstantIndexOp>(loc, j);
 
-        // k-loop
         auto loop = rewriter.create<scf::ForOp>(loc, c0, cK, c1, ValueRange{zero});
         rewriter.setInsertionPointToStart(loop.getBody());
 
-        Value k = loop.getInductionVar();
+        Value k   = loop.getInductionVar();
         Value acc = loop.getRegionIterArgs()[0];
 
-        // A[i*K + k]
+        // A[i*K + k] (row-major)
         Value aIdx = rewriter.create<arith::AddIOp>(
             loc, rewriter.create<arith::MulIOp>(loc, iVal, cK), k);
-        Value lhs = rewriter.create<memref::LoadOp>(loc, memrefA, aIdx);
+        Value lhs = rewriter.create<memref::LoadOp>(loc, memrefA, ValueRange{aIdx});
 
-        // B[k*N + j]
-        Value bIdx = rewriter.create<arith::AddIOp>(
-            loc, rewriter.create<arith::MulIOp>(loc, k, cN), jVal);
-        Value rhs = rewriter.create<memref::LoadOp>(loc, memrefB, bIdx);
+        // B[k + K*j] (column-major)   // your j*K + k is equivalent
+        Value Kj   = rewriter.create<arith::MulIOp>(loc, cK, jVal);
+        Value bIdx = rewriter.create<arith::AddIOp>(loc, k, Kj);
+        Value rhs  = rewriter.create<memref::LoadOp>(loc, memrefB, ValueRange{bIdx});
 
-        // Multiply in GF(2^8) and XOR accumulate
-        Value prod = rewriter.create<gf::MulOp>(loc, lhs, rhs);
+        Value prod   = rewriter.create<gf::MulOp>(loc, lhs, rhs);
         Value newAcc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
         rewriter.create<scf::YieldOp>(loc, newAcc);
 
-        // After loop
         rewriter.setInsertionPointAfter(loop);
         Value result = loop.getResult(0);
-        Value outIdx = rewriter.create<arith::AddIOp>(
-            loc, rewriter.create<arith::MulIOp>(loc, iVal, cN), jVal);
-        rewriter.create<memref::StoreOp>(loc, result, outputMemRef, outIdx);
+
+        // C[i + M*j] (column-major)  **FIX**
+        Value Mj   = rewriter.create<arith::MulIOp>(loc, cM, jVal);
+        Value outIdx = rewriter.create<arith::AddIOp>(loc, iVal, Mj);
+        rewriter.create<memref::StoreOp>(loc, result, memrefC, ValueRange{outIdx});
       }
     }
 
