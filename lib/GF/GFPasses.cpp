@@ -565,17 +565,19 @@ struct GFKeyScheduleOpLowering : public OpRewritePattern<gf::KeyScheduleOp> {
           // THEN branch
           {
             OpBuilder thenB = ifOp.getThenBodyBuilder();
-            // Rotate
+            // Rotate (still i32 words in 'temp')
             SmallVector<Value> rot = {temp[1], temp[2], temp[3], temp[0]};
             for (int k = 0; k < 4; ++k) {
-              // SBox returns i8, extend to i32
-              Value s8 = thenB.create<gf::SBoxOp>(l, rot[k]);
-              rot[k] = thenB.create<arith::ExtUIOp>(l, thenB.getI32Type(), s8);
+              // NEW: narrow to i8 for SBox
+              Value in8 = thenB.create<arith::TruncIOp>(l, thenB.getI8Type(), rot[k]);
+              Value s8  = thenB.create<gf::SBoxOp>(l, in8);
+              // widen back to i32 for the later XOR math
+              rot[k]    = thenB.create<arith::ExtUIOp>(l, thenB.getI32Type(), s8);
             }
             // RCON
             Value div4 = thenB.create<arith::DivUIOp>(l, iv,
-                             thenB.create<arith::ConstantIndexOp>(l, 4));
-            Value rc8 = thenB.create<memref::LoadOp>(l, rconMem, div4);
+                            thenB.create<arith::ConstantIndexOp>(l, 4));
+            Value rc8  = thenB.create<memref::LoadOp>(l, rconMem, div4);
             Value rc32 = thenB.create<arith::ExtUIOp>(l, thenB.getI32Type(), rc8);
             // XOR
             rot[0] = thenB.create<arith::XOrIOp>(l, rot[0], rc32);
