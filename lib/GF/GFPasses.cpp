@@ -331,7 +331,7 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
             loc, rewriter.create<arith::MulIOp>(loc, iVal, cK), k);
         Value lhs = rewriter.create<memref::LoadOp>(loc, memrefA, ValueRange{aIdx});
 
-        // B[k + K*j] (column-major)   // your j*K + k is equivalent
+        // B[k + K*j] (column-major)
         Value Kj   = rewriter.create<arith::MulIOp>(loc, cK, jVal);
         Value bIdx = rewriter.create<arith::AddIOp>(loc, k, Kj);
         Value rhs  = rewriter.create<memref::LoadOp>(loc, memrefB, ValueRange{bIdx});
@@ -343,7 +343,7 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
         rewriter.setInsertionPointAfter(loop);
         Value result = loop.getResult(0);
 
-        // C[i + M*j] (column-major)  **FIX**
+        // C[i + M*j] (column-major)
         Value Mj   = rewriter.create<arith::MulIOp>(loc, cM, jVal);
         Value outIdx = rewriter.create<arith::AddIOp>(loc, iVal, Mj);
         rewriter.create<memref::StoreOp>(loc, result, memrefC, ValueRange{outIdx});
@@ -393,7 +393,7 @@ struct GFSBoxOpLowering : public OpRewritePattern<gf::SBoxOp> {
     );
 
     // 3) Cast the input byte to index:
-    Value idx = rewriter.create<arith::IndexCastOp>(
+    Value idx = rewriter.create<arith::IndexCastUIOp>(
       loc,
       rewriter.getIndexType(),
       op.getInput()
