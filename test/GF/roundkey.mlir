@@ -93,19 +93,40 @@ module {
         memref.store %k14, %key[%i14] : memref<16xi8>
         memref.store %k15, %key[%i15] : memref<16xi8>
 
-        // 7) Apply AddRoundKey operation
+        // // 7) Apply AddRoundKey operation
+        // gf.add_round_key %state, %key : memref<16xi8>, memref<16xi8>
+
+        // // 8) Verify by XOR-ing entire result
+        // %n = arith.constant 16 : index
+        // %zero = arith.constant 0 : i8
+        // %final = scf.for %j = %i0 to %n step %i1 iter_args(%acc = %zero) -> i8 {
+        // %val = memref.load %state[%j] : memref<16xi8>
+        // %new = arith.xori %acc, %val : i8
+        // scf.yield %new : i8
+        // }
+
+        // func.return %final : i8
+
+        %c01 = arith.constant 0 : index
+        %iters = arith.constant 10001 : index
+        %c16  = arith.constant 16 : index
+
+        %acc0 = arith.constant 0 : i8
+        %acc  = scf.for %t = %c01 to %iters step %i1 iter_args(%a = %acc0) -> i8 {
+        // one AddRoundKey (in-place on %state)
         gf.add_round_key %state, %key : memref<16xi8>, memref<16xi8>
 
-        // 8) Verify by XOR-ing entire result
-        %n = arith.constant 16 : index
-        %zero = arith.constant 0 : i8
-        %final = scf.for %j = %i0 to %n step %i1 iter_args(%acc = %zero) -> i8 {
-        %val = memref.load %state[%j] : memref<16xi8>
-        %new = arith.xori %acc, %val : i8
-        scf.yield %new : i8
+        // per-iter consume: XOR-reduce current state into running acc
+        %a_next = scf.for %j = %i0 to %c16 step %i1 iter_args(%cur = %a) -> i8 {
+            %v  = memref.load %state[%j] : memref<16xi8>
+            %nx = arith.xori %cur, %v : i8
+            scf.yield %nx : i8
+        }
+        scf.yield %a_next : i8
         }
 
-        func.return %final : i8
+        return %acc : i8
+
 
     } 
 }

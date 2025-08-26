@@ -1,122 +1,139 @@
 module {
-    memref.global "public" @_dump_start : memref<16xi8>
-
-    func.func @aes_encrypt_driver(%key_in: memref<16xi8>, %state_in_out: memref<16xi8>) -> () {
-        
-        %schedule = memref.alloca() : memref<176xi8>            // 11 * 16
-
-        // Expand key schedule
+    func.func @aes_encrypt_driver(%key_in: memref<16xi8>, %state_in_out: memref<16xi8>) {
+        // ---- Key schedule ----
+        %schedule = memref.alloca() : memref<176xi8>  // 11 * 16
         gf.key_schedule %key_in into %schedule : memref<16xi8>, memref<176xi8>
 
-        // Initial AddRoundKey (round 0)
-        %rk0 = memref.alloca() : memref<16xi8>
-        %c0 = arith.constant 0 : index
-        %c1 = arith.constant 1 : index
-        %c2 = arith.constant 2 : index
+        // ---- Constants ----
+        %c0   = arith.constant 0  : index
+        %c1   = arith.constant 1  : index
         %c3 = arith.constant 3 : index
-        %c4 = arith.constant 4 : index
-        %c16 = arith.constant 16 : index
+        %c4   = arith.constant 4  : index
+        %c10  = arith.constant 10 : index
+        %c16  = arith.constant 16 : index
+        %off16 = arith.constant 16 : index
+        %off10 = arith.constant 160 : index  // 10 * 16
+
+        // ---- Initial AddRoundKey (round 0) — inline XOR (no temp, no copy idiom)
         scf.for %i = %c0 to %c16 step %c1 {
-            %v = memref.load %schedule[%i] : memref<176xi8>
-            memref.store %v, %rk0[%i] : memref<16xi8>
+            %k = memref.load %schedule[%i] : memref<176xi8>
+            %s = memref.load %state_in_out[%i] : memref<16xi8>
+            %x = arith.xori %s, %k : i8
+            memref.store %x, %state_in_out[%i] : memref<16xi8>
             scf.yield
         }
-        gf.add_round_key %state_in_out, %rk0 : memref<16xi8>, memref<16xi8>
 
-        // Buffers for MixColumns
-        %col_in = memref.alloca() : memref<4xi8>
-        %col_out = memref.alloca() : memref<4xi8>
-
-        // Column offsets (col-major)
-        %c_col0 = arith.constant 0 : index
-        %c_col1 = arith.constant 4 : index
-        %c_col2 = arith.constant 8 : index
-        %c_col3 = arith.constant 12 : index
-
-        // Rounds 1..9
-        %r1 = arith.constant 1 : index
-        %r10 = arith.constant 10 : index
-        scf.for %round = %r1 to %r10 step %c1 {
-            // SubBytes
+        // ---- Rounds 1..9 ----
+        scf.for %round = %c1 to %c10 step %c1 {
+            // SubBytes (in place)
             scf.for %i = %c0 to %c16 step %c1 {
-            %b = memref.load %state_in_out[%i] : memref<16xi8>
+            %b   = memref.load %state_in_out[%i] : memref<16xi8>
             %b_s = gf.sbox %b : i8
             memref.store %b_s, %state_in_out[%i] : memref<16xi8>
             scf.yield
             }
 
-            // ShiftRows
+            // ShiftRows (in place)
             gf.shift_rows %state_in_out : memref<16xi8>
 
-            // MixColumns
-            %r4 = arith.constant 4 : index
+            // MixColumns (per column, no subview; 4 loads -> compute -> 4 stores)
+            %col = memref.alloca() : memref<4xi8>
             scf.for %j = %c0 to %c4 step %c1 {
-                %base = arith.muli %j, %r4 : index
+            %base = arith.muli %j, %c4 : index
 
-                %p0 = arith.addi %base, %c0 : index
-                %p1 = arith.addi %base, %c1 : index
-                %p2 = arith.addi %base, %c2 : index
-                %p3 = arith.addi %base, %c3 : index
+            // Load 4 bytes from state into the 4-byte buffer (explicit stores; not a bulk copy loop)
+            %i0 = arith.addi %base, %c0 : index
+            %i1 = arith.addi %base, %c1 : index
+            %i2 = arith.addi %base, %c4 : index  // careful: %c4 is 4; need index 2 not 4!
+            %c2 = arith.constant 2 : index
+            %i2_fix = arith.addi %base, %c2 : index
+            %i3 = arith.addi %base, %c3 : index
 
-                %v0 = memref.load %state_in_out[%p0] : memref<16xi8>
-                %v1 = memref.load %state_in_out[%p1] : memref<16xi8>
-                %v2 = memref.load %state_in_out[%p2] : memref<16xi8>
-                %v3 = memref.load %state_in_out[%p3] : memref<16xi8>
+            %v0 = memref.load %state_in_out[%i0] : memref<16xi8>
+            %v1 = memref.load %state_in_out[%i1] : memref<16xi8>
+            %v2 = memref.load %state_in_out[%i2_fix] : memref<16xi8>
+            %v3 = memref.load %state_in_out[%i3] : memref<16xi8>
 
-                memref.store %v0, %col_in[%c0] : memref<4xi8>
-                memref.store %v1, %col_in[%c1] : memref<4xi8>
-                memref.store %v2, %col_in[%c2] : memref<4xi8>
-                memref.store %v3, %col_in[%c3] : memref<4xi8>
+            memref.store %v0, %col[%c0] : memref<4xi8>
+            memref.store %v1, %col[%c1] : memref<4xi8>
+            memref.store %v2, %col[%c2] : memref<4xi8>
+            memref.store %v3, %col[%c3] : memref<4xi8>
 
-                gf.mix_columns %col_in into %col_out : memref<4xi8>, memref<4xi8>
+            // In-place MixColumns on the 4-byte buffer
+            gf.mix_columns %col into %col : memref<4xi8>, memref<4xi8>
 
-                %rl0 = memref.load %col_out[%c0] : memref<4xi8>
-                %rl1 = memref.load %col_out[%c1] : memref<4xi8>
-                %rl2 = memref.load %col_out[%c2] : memref<4xi8>
-                %rl3 = memref.load %col_out[%c3] : memref<4xi8>
+            // Write results back to state (4 explicit stores; no copy loop → no memcpy)
+            %rl0 = memref.load %col[%c0] : memref<4xi8>
+            %rl1 = memref.load %col[%c1] : memref<4xi8>
+            %rl2 = memref.load %col[%c2] : memref<4xi8>
+            %rl3 = memref.load %col[%c3] : memref<4xi8>
 
-                memref.store %rl0, %state_in_out[%p0] : memref<16xi8>
-                memref.store %rl1, %state_in_out[%p1] : memref<16xi8>
-                memref.store %rl2, %state_in_out[%p2] : memref<16xi8>
-                memref.store %rl3, %state_in_out[%p3] : memref<16xi8>
-
-                scf.yield
+            memref.store %rl0, %state_in_out[%i0] : memref<16xi8>
+            memref.store %rl1, %state_in_out[%i1] : memref<16xi8>
+            memref.store %rl2, %state_in_out[%i2_fix] : memref<16xi8>
+            memref.store %rl3, %state_in_out[%i3] : memref<16xi8>
+            scf.yield
             }
 
-            // AddRoundKey for this round
-            %off_mul = arith.constant 16 : index
-            %off = arith.muli %round, %off_mul : index
-            scf.for %jj = %c0 to %c16 step %c1 {
-                %src_idx = arith.addi %off, %jj : index
-                %val = memref.load %schedule[%src_idx] : memref<176xi8>
-                memref.store %val, %rk0[%jj] : memref<16xi8>
-                scf.yield
+            // AddRoundKey for this round — inline XOR from schedule (no rk0, no copy)
+            %off = arith.muli %round, %off16 : index
+            scf.for %i = %c0 to %c16 step %c1 {
+            %src = arith.addi %off, %i : index
+            %k   = memref.load %schedule[%src] : memref<176xi8>
+            %s   = memref.load %state_in_out[%i] : memref<16xi8>
+            %x   = arith.xori %s, %k : i8
+            memref.store %x, %state_in_out[%i] : memref<16xi8>
+            scf.yield
             }
-            gf.add_round_key %state_in_out, %rk0 : memref<16xi8>, memref<16xi8>
             scf.yield
         }
 
-        // Final round (round 10)
+        // ---- Final round (round 10): SubBytes, ShiftRows, AddRoundKey inline ----
         scf.for %i = %c0 to %c16 step %c1 {
-            %b = memref.load %state_in_out[%i] : memref<16xi8>
+            %b   = memref.load %state_in_out[%i] : memref<16xi8>
             %b_s = gf.sbox %b : i8
             memref.store %b_s, %state_in_out[%i] : memref<16xi8>
             scf.yield
         }
         gf.shift_rows %state_in_out : memref<16xi8>
 
-        %off10 = arith.constant 160 : index
-        scf.for %jj = %c0 to %c16 step %c1 {
-            %src_idx10 = arith.addi %off10, %jj : index
-            %val10 = memref.load %schedule[%src_idx10] : memref<176xi8>
-            memref.store %val10, %rk0[%jj] : memref<16xi8>
+        scf.for %i = %c0 to %c16 step %c1 {
+            %src10 = arith.addi %off10, %i : index
+            %k10   = memref.load %schedule[%src10] : memref<176xi8>
+            %s10   = memref.load %state_in_out[%i] : memref<16xi8>
+            %x10   = arith.xori %s10, %k10 : i8
+            memref.store %x10, %state_in_out[%i] : memref<16xi8>
             scf.yield
         }
-        gf.add_round_key %state_in_out, %rk0 : memref<16xi8>, memref<16xi8>
 
-        // %final = arith.constant 1 : i8
         func.return
     }
+
+    // --- Benchmark harness: repeat AES driver N times (rolled), return i8 acc
+    func.func @bench_aes(%iters: index, %key: memref<16xi8>, %state: memref<16xi8>) -> i8 {
+    %c0   = arith.constant 0  : index
+    %c1   = arith.constant 1  : index
+    %i0   = arith.constant 0  : index
+    %i1   = arith.constant 1  : index
+    %i16  = arith.constant 16 : index
+    %acc0 = arith.constant 0  : i8
+
+    %acc = scf.for %t = %c0 to %iters step %c1 iter_args(%a = %acc0) -> i8 {
+        func.call @aes_encrypt_driver(%key, %state)
+        : (memref<16xi8>, memref<16xi8>) -> ()
+
+        // per-iter consume: xor-reduce state into running acc
+        %a_next = scf.for %j = %i0 to %i16 step %i1 iter_args(%cur = %a) -> i8 {
+        %v  = memref.load %state[%j] : memref<16xi8>
+        %nx = arith.xori %cur, %v : i8
+        scf.yield %nx : i8
+        }
+        scf.yield %a_next : i8
+    }
+    return %acc : i8
+    }
+
+
 
     func.func @main() -> i8 {
         // allocate key and state on the stack
@@ -177,7 +194,6 @@ module {
         memref.store %k14, %key[%idx14] : memref<16xi8>
         memref.store %k15, %key[%idx15] : memref<16xi8>
 
-        // store plaintext bytes into state (plaintext: 00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff)
         %pt0 = arith.constant 0x32 : i8
         %pt1 = arith.constant 0x43 : i8
         %pt2 = arith.constant 0xf6 : i8
@@ -213,27 +229,12 @@ module {
         memref.store %pt14, %state[%idx14] : memref<16xi8>
         memref.store %pt15, %state[%idx15] : memref<16xi8>
 
-        // call the driver (in-place on %state)
-        func.call @aes_encrypt_driver(%key, %state) : (memref<16xi8>, memref<16xi8>) -> ()
-
-        // 5) XOR reduction using loop-carried value
-        %r16 = arith.constant 16 : index
-        %zero = arith.constant 0 : i8
-        %final = scf.for %j = %idx0 to %r16 step %idx1 iter_args(%acc = %zero) -> i8 {
-        %val = memref.load %state[%j] : memref<16xi8>
-        %new_acc = arith.xori %acc, %val : i8
-        scf.yield %new_acc : i8
-        }
-
-        // After XOR loop
-        %dump = memref.get_global @_dump_start : memref<16xi8>
-        scf.for %k = %idx0 to %r16 step %idx1 {
-        %v = memref.load %state[%k] : memref<16xi8>
-        memref.store %v, %dump[%k] : memref<16xi8>
-        }
-
-        func.return %final : i8
-
         
+        // --- In your existing main, after initializing %key and %state ---
+        %iters = arith.constant 1000 : index
+        %acc = func.call @bench_aes(%iters, %key, %state)
+         : (index, memref<16xi8>, memref<16xi8>) -> i8
+        return %acc : i8
+
     }
 }

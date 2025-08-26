@@ -447,10 +447,6 @@ struct GFMixColumnsOpLowering : public OpRewritePattern<gf::MixColumnsOp> {
     // Load matrix reference
     Value mat = rewriter.create<memref::GetGlobalOp>(
         loc, MemRefType::get({16}, rewriter.getI8Type()), "aes_mix_columns_matrix");
-    
-    // Allocate temporary buffer for MatMul result (4 elements)
-    auto tmpType = MemRefType::get({4}, rewriter.getI8Type());
-    Value tmpResult = rewriter.create<memref::AllocaOp>(loc, tmpType);
 
     // Load column values
     SmallVector<Value> colValues;
@@ -464,20 +460,12 @@ struct GFMixColumnsOpLowering : public OpRewritePattern<gf::MixColumnsOp> {
         loc,
         /*lhs=*/ValueRange{mat},
         /*rhs=*/colValues,
-        /*output=*/tmpResult,
+        /*output=*/outMemRef,
         rewriter.getI8IntegerAttr(4),
         rewriter.getI8IntegerAttr(4),
         rewriter.getI8IntegerAttr(1));
 
-    // Mask and copy results into output memref
-    Value mask = rewriter.create<arith::ConstantIntOp>(loc, 0xFF, 8);
-    for (int i = 0; i < 4; ++i) {
-      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
-      Value val = rewriter.create<memref::LoadOp>(loc, tmpResult, idx);
-      Value masked = rewriter.create<arith::AndIOp>(loc, val, mask);
-      rewriter.create<memref::StoreOp>(loc, masked, outMemRef, idx);
-    }
-
+        
     rewriter.eraseOp(op);
     return success();
   }
@@ -664,63 +652,22 @@ struct GFShiftRowsOpLowering : OpRewritePattern<gf::ShiftRowsOp> {
     Location loc = op.getLoc();
     Value state = op.getState();
 
-    ModuleOp module = op->getParentOfType<ModuleOp>();
-    if (!module)
-      return rewriter.notifyMatchFailure(op, "not inside a module");
-
-    using GlobalOp = memref::GlobalOp;
-      if (!module.lookupSymbol<GlobalOp>("aes_shift_rows_matrix")) {
-        auto shiftmap = parseSourceString<ModuleOp>(kAESShiftRowsMatrix, rewriter.getContext());
-        if (!shiftmap) return failure();
-        
-        SymbolTable symtab(module);
-        for (auto glob : shiftmap->getOps<GlobalOp>()) {
-          if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
-            OpBuilder::InsertionGuard guard(rewriter);
-            rewriter.setInsertionPointToEnd(module.getBody());
-            rewriter.clone(*glob.getOperation());
-          }
-        }
-      }
-
-
-    // Allocate temporary buffer: memref<16xi8>
-    auto memrefType = mlir::dyn_cast<MemRefType>(state.getType());
-    Value temp = rewriter.create<memref::AllocOp>(loc, memrefType);
-
-    // Load the global shift map
-    Value lut = rewriter.create<memref::GetGlobalOp>(
-        loc,
-        MemRefType::get({16}, rewriter.getI8Type()),
-        StringAttr::get(rewriter.getContext(), "aes_shift_rows_matrix"));
-
-    // Perform state[i] = state[shiftmap[i]]
+    // Load all 16 bytes once
+    SmallVector<Value, 16> src(16);
     for (int i = 0; i < 16; ++i) {
-      Value iC = rewriter.create<arith::ConstantIndexOp>(loc, i);
-
-      // mappedIndex = shiftmap[i]
-      Value mappedIndex = rewriter.create<memref::LoadOp>(loc, lut, iC);
-
-      // mappedIndex : i8 → index
-      Value mappedIndexIdx = rewriter.create<arith::IndexCastUIOp>(
-          loc, rewriter.getIndexType(), mappedIndex);
-
-      // val = state[shiftmap[i]]
-      Value val = rewriter.create<memref::LoadOp>(loc, state, mappedIndexIdx);
-
-      // temp[i] = val
-      rewriter.create<memref::StoreOp>(loc, val, temp, iC);
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      src[i] = rewriter.create<memref::LoadOp>(loc, state, idx);
     }
 
-    // Copy temp back to state
-    for (int i = 0; i < 16; ++i) {
-      Value iC = rewriter.create<arith::ConstantIndexOp>(loc, i);
-      Value val = rewriter.create<memref::LoadOp>(loc, temp, iC);
-      rewriter.create<memref::StoreOp>(loc, val, state, iC);
-    }
+    // Column-major AES ShiftRows mapping: out[i] = src[kMap[i]]
+    static const int kMap[16] = {
+      0,5,10,15, 4,9,14,3, 8,13,2,7, 12,1,6,11
+    };
 
-    // Dealloc temp
-    rewriter.create<memref::DeallocOp>(loc, temp);
+    for (int i = 0; i < 16; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      rewriter.create<memref::StoreOp>(loc, src[kMap[i]], state, idx);
+    }
 
     rewriter.eraseOp(op);
     return success();
@@ -746,22 +693,23 @@ struct ConvertGFToArithPass
   }
 
   void runOnOperation() override {
-    ConversionTarget target(getContext());
-    target.addIllegalOp<gf::AddOp>();
-    target.addIllegalOp<gf::MulOp>();
-    target.addIllegalOp<gf::InvOp>();
-    target.addIllegalOp<gf::MatMulOp>();
-    target.addIllegalOp<gf::SBoxOp>();
-    target.addIllegalOp<gf::MixColumnsOp>();
-    target.addIllegalOp<gf::KeyScheduleOp>();
-    target.addIllegalOp<gf::AddRoundKeyOp>();
-    target.addIllegalOp<gf::ShiftRowsOp>();
+    MLIRContext &ctx = getContext();
+    ModuleOp module = getOperation();
+
+    
+    
+    ConversionTarget target(ctx);
     target.addIllegalDialect<gf::GFDialect>();
     target.addLegalDialect<arith::ArithDialect>();
     target.addLegalDialect<memref::MemRefDialect>();
     target.addLegalDialect<scf::SCFDialect>();
+    target.addIllegalOp<
+      gf::AddOp, gf::MulOp, gf::InvOp, gf::MatMulOp,
+      gf::SBoxOp, gf::MixColumnsOp, gf::KeyScheduleOp,
+      gf::AddRoundKeyOp, gf::ShiftRowsOp
+    >();
 
-    RewritePatternSet patterns(&getContext());
+    RewritePatternSet patterns(&ctx);
     patterns.add<
     GFAddOpLowering, 
     GFMulOpLowering,
@@ -771,14 +719,14 @@ struct ConvertGFToArithPass
     GFMixColumnsOpLowering,
     GFKeyScheduleOpLowering,
     GFAddRoundKeyOpLowering,
-    GFShiftRowsOpLowering>(&getContext());
+    GFShiftRowsOpLowering>(&ctx);
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
 
-    RewritePatternSet nestedPatterns(&getContext());
-    nestedPatterns.add<GFSBoxOpLowering>(&getContext());
-    ConversionTarget nestedTarget(getContext());
+    RewritePatternSet nestedPatterns(&ctx);
+    nestedPatterns.add<GFSBoxOpLowering>(&ctx);
+    ConversionTarget nestedTarget(ctx);
     nestedTarget.addIllegalOp<gf::SBoxOp>();
     nestedTarget.addLegalDialect<arith::ArithDialect>();
     nestedTarget.addLegalDialect<memref::MemRefDialect>();
