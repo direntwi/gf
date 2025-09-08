@@ -198,15 +198,6 @@ module {
     %state = memref.alloca() : memref<16xi8>
     %out   = memref.alloca() : memref<16xi8>
 
-    // (Optional) initialize %state with your constants once (as you had)
-    // You can also replace the many stores with a memref.global initializer.
-
-    // %iters = arith.constant 1000 : index
-    // func.call @bench_mixcolumns(%iters, %state, %out)
-    //   : (index, memref<16xi8>, memref<16xi8>) -> ()
-
-    // %ret = arith.constant 0 : i8
-    // return %ret : i8
 
     %iters = arith.constant 1000 : index
   %acc   = func.call @bench_mixcolumns(%iters, %state, %out)

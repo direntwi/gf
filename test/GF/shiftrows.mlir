@@ -72,7 +72,7 @@ module {
 
     %c01 = arith.constant 0 : index
     %iters = arith.constant 10001 : index
-    // add this once (you don't have %i16 yet)
+
     %i16  = arith.constant 16 : index
     %acc0 = arith.constant 0  : i8
 
