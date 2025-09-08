@@ -27,9 +27,9 @@ inline constexpr llvm::StringLiteral kLogAntilogTables = R"mlir(
 }
 )mlir";
 
-inline constexpr llvm::StringLiteral kSBoxLookupTable = R"mlir(
+inline constexpr llvm::StringLiteral kSBox = R"mlir(
   builtin.module {
-  memref.global "private" constant @sbox_table: memref<256xi8> =
+  memref.global "private" constant @sbox: memref<256xi8> =
     dense<[
     0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
     0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
@@ -51,6 +51,30 @@ inline constexpr llvm::StringLiteral kSBoxLookupTable = R"mlir(
 }
 )mlir";
 
+inline constexpr llvm::StringLiteral kInvSBox = R"mlir(
+  builtin.module {
+  memref.global "private" constant @inv_sbox: memref<256xi8> =
+    dense<[
+    82, 9, 106, 213, 48, 54, 165, 56, 191, 64, 163, 158, 129, 243, 215, 251,
+    124, 227, 57, 130, 155, 47, 255, 135, 52, 142, 67, 68, 196, 222, 233, 203,
+    84, 123, 148, 50, 166, 194, 35, 61, 238, 76, 149, 11, 66, 250, 195, 78,
+    8, 46, 161, 102, 40, 217, 36, 178, 118, 91, 162, 73, 109, 139, 209, 37,
+    114, 248, 246, 100, 134, 104, 152, 22, 212, 164, 92, 204, 93, 101, 182, 146,
+    108, 112, 72, 80, 253, 237, 185, 218, 94, 21, 70, 87, 167, 141, 157, 132,
+    144, 216, 171, 0, 140, 188, 211, 10, 247, 228, 88, 5, 184, 179, 69, 6,
+    208, 44, 30, 143, 202, 63, 15, 2, 193, 175, 189, 3, 1, 19, 138, 107,
+    58, 145, 17, 65, 79, 103, 220, 234, 151, 242, 207, 206, 240, 180, 230, 115,
+    150, 172, 116, 34, 231, 173, 53, 133, 226, 249, 55, 232, 28, 117, 223, 110,
+    71, 241, 26, 113, 29, 41, 197, 137, 111, 183, 98, 14, 170, 24, 190, 27,
+    252, 86, 62, 75, 198, 210, 121, 32, 154, 219, 192, 254, 120, 205, 90, 244,
+    31, 221, 168, 51, 136, 7, 199, 49, 177, 18, 16, 89, 39, 128, 236, 95,
+    96, 81, 127, 169, 25, 181, 74, 13, 45, 229, 122, 159, 147, 201, 156, 239,
+    160, 224, 59, 77, 174, 42, 245, 176, 200, 235, 187, 60, 131, 83, 153, 97,
+    23, 43, 4, 126, 186, 119, 214, 38, 225, 105, 20, 99, 85, 33, 12, 125
+  ]>
+}
+)mlir";
+
 inline constexpr llvm::StringLiteral kAESMixColumnsMatrix = R"mlir(
   builtin.module {
   memref.global "private" constant @aes_mix_columns_matrix: memref<16xi8> =
@@ -59,6 +83,18 @@ inline constexpr llvm::StringLiteral kAESMixColumnsMatrix = R"mlir(
     0x01, 0x02, 0x03, 0x01,
     0x01, 0x01, 0x02, 0x03,
     0x03, 0x01, 0x01, 0x02
+  ]>
+}
+)mlir";
+
+inline constexpr llvm::StringLiteral kAESInvMixColumnsMatrix = R"mlir(
+  builtin.module {
+  memref.global "private" constant @aes_inv_mix_columns_matrix: memref<16xi8> =
+    dense<[
+    0x0e,0x0b,0x0d,0x09,
+         0x09,0x0e,0x0b,0x0d,
+         0x0d,0x09,0x0e,0x0b,
+         0x0b,0x0d,0x09,0x0e
   ]>
 }
 )mlir";

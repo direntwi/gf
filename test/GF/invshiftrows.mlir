@@ -1,25 +1,25 @@
 module {
-  func.func @main() -> (i8) {
+    func.func @main() -> (i8) {
     // 1) Allocate memory for state
     %state = memref.alloca() : memref<16xi8>
 
     // 2) AES-128 test key (FIPS-197 Appendix A)
-    %k0 = arith.constant 0x2b : i8
-    %k1 = arith.constant 0x7e : i8
-    %k2 = arith.constant 0x15 : i8
-    %k3 = arith.constant 0x16 : i8
-    %k4 = arith.constant 0x28 : i8
-    %k5 = arith.constant 0xae : i8
-    %k6 = arith.constant 0xd2 : i8
-    %k7 = arith.constant 0xa6 : i8
-    %k8 = arith.constant 0xab : i8
-    %k9 = arith.constant 0xf7 : i8
-    %k10 = arith.constant 0x15 : i8
-    %k11 = arith.constant 0x88 : i8
-    %k12 = arith.constant 0x09 : i8
-    %k13 = arith.constant 0xcf : i8
-    %k14 = arith.constant 0x4f : i8
-    %k15 = arith.constant 0x3c : i8
+    %k0 = arith.constant 0x7a : i8
+    %k1 = arith.constant 0xd5 : i8
+    %k2 = arith.constant 0xfd : i8
+    %k3 = arith.constant 0xa7 : i8
+    %k4 = arith.constant 0x89 : i8
+    %k5 = arith.constant 0xef : i8
+    %k6 = arith.constant 0x4e : i8
+    %k7 = arith.constant 0x27 : i8
+    %k8 = arith.constant 0x2b : i8
+    %k9 = arith.constant 0xca : i8
+    %k10 = arith.constant 0x10 : i8
+    %k11 = arith.constant 0x0b : i8
+    %k12 = arith.constant 0x3d : i8
+    %k13 = arith.constant 0x9f : i8
+    %k14 = arith.constant 0xf5 : i8
+    %k15 = arith.constant 0x9f : i8
 
     %i0 = arith.constant 0  : index
     %i1 = arith.constant 1  : index
@@ -56,7 +56,7 @@ module {
     memref.store %k15, %state[%i15] : memref<16xi8>
 
     // 3) Run key schedule
-    // gf.shift_rows %state : memref<16xi8>
+    gf.inv_shift_rows %state : memref<16xi8>
 
     // 4) Reduce result by XOR-ing all 16 bytes of the schedule
     // %r16 = arith.constant 16 : index
@@ -79,7 +79,7 @@ module {
     // rolled outer loop with per-iter consume; returns the accumulator
     %acc = scf.for %t = %c01 to %iters step %i1 iter_args(%a = %acc0) -> i8 {
       // one ShiftRows (in-place)
-      gf.shift_rows %state : memref<16xi8>
+      gf.inv_shift_rows %state : memref<16xi8>
 
       // per-iter XOR-reduce of the current state into running acc
       %a_next = scf.for %j = %i0 to %i16 step %i1 iter_args(%cur = %a) -> i8 {
@@ -91,6 +91,6 @@ module {
       scf.yield %a_next : i8
     }
     func.return %acc : i8
-
-  }
+    
+    }
 }

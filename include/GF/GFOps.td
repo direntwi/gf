@@ -209,6 +209,62 @@ def GF_ShiftRowsOp : GF_Op<"shift_rows", [MemoryEffects<[MemRead, MemWrite]>]> {
   let hasVerifier = 1;
   let assemblyFormat = "$state attr-dict `:` type($state)";
 }
+//===----------------------------------------------------------------------===//
+// InvSBoxOp
+//===----------------------------------------------------------------------===//
+
+def GF_InvSBoxOp : GF_Op<"inv_sbox", [Pure]> {
+    let summary = "AES Inverse S‑Box byte substitution in GF(2^8)";
+    let description = [{
+        Replaces an input byte x with InvSBox[x], where InvSBox is the
+        standard 256‑entry AES inverse substitution box.
+    }];
+
+    let arguments = (ins I8:$input);
+    let results = (outs I8:$res);
+    let hasVerifier = 1;
+    let assemblyFormat = "$input attr-dict `:` type($res)";
+}
+//===----------------------------------------------------------------------===//
+// InvShiftRowsOp
+//===----------------------------------------------------------------------===//
+
+def GF_InvShiftRowsOp : GF_Op<"inv_shift_rows",
+    [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "Performs AES Inverse ShiftRows on a 4x4 byte state";
+  let description = [{
+    This operation cyclically shifts the rows of the 4x4 AES state matrix:
+    - Row 0: no shift
+    - Row 1: right shift by 1
+    - Row 2: right shift by 2
+    - Row 3: right shift by 3
+  }];
+
+  let arguments = (ins MemRefOf<[I8]>:$state);
+  let hasVerifier = 1;
+  let assemblyFormat = "$state attr-dict `:` type($state)";
+}
+
+//===----------------------------------------------------------------------===//
+// InvMixColumnsOp
+//===----------------------------------------------------------------------===//
+
+def GF_InvMixColumnsOp : GF_Op<"inv_mix_columns",
+  [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "AES InvMixColumns on a single 4-byte column in GF(2^8)";
+  let description = [{
+    Given a column in memory (4 bytes), performs the inverse MixColumns
+    transformation and stores the result in the output column memref.
+    Uses the standard Rijndael inverse matrix over GF(2^8) with p(x)=x^8+x^4+x^3+x+1.
+  }];
+
+  let arguments = (ins
+    MemRefOf<[I8]>:$col,
+    MemRefOf<[I8]>:$out 
+  );
+  let hasVerifier = 1;
+  let assemblyFormat = "$col `into` $out attr-dict `:` type($col) `,` type($out)";
+}
 
 
 #endif // GF_OPS

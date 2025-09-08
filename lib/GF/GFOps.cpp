@@ -258,3 +258,58 @@ LogicalResult ShiftRowsOp::verify() {
     return emitOpError("state must be memref<16xi8>");
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// InvSBoxOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult InvSBoxOp::verify() {
+    if (auto constantOp = getInput().getDefiningOp<arith::ConstantOp>()) {
+        auto intValue = mlir::dyn_cast<IntegerAttr>(constantOp.getValue());
+        if (!intValue)
+            return emitOpError("expects a constant integer input");
+        if (intValue.getInt() < 0 || intValue.getInt() > 255)
+            return emitOpError("input value must be in range [0, 255]");
+    }
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// InvShiftRowsOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult InvShiftRowsOp::verify() {
+  auto state = getState();
+  auto stateType = mlir::dyn_cast<MemRefType>(state.getType());
+  
+  if (stateType.getShape().size() != 1 || stateType.getShape()[0] != 16)
+    return emitOpError("state must be memref<16xi8>");
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// InvMixColumnsOp
+//===----------------------------------------------------------------------===//
+LogicalResult InvMixColumnsOp::verify() {
+
+  auto colMemRef = getCol();
+  auto outMemRef = getOut();
+
+  auto colType = mlir::dyn_cast<MemRefType>(colMemRef.getType());
+  auto outType = mlir::dyn_cast<MemRefType>(outMemRef.getType());
+
+  if (!colType || !colType.getElementType().isInteger(8) || colType.getNumElements() != 4)
+    return emitOpError("col operand must be memref<4xi8>");
+
+  if (!outType || !outType.getElementType().isInteger(8) || outType.getNumElements() != 4)
+    return emitOpError("out operand must be memref<4xi8>");
+
+  for (auto val : getOperands()) {
+    if (auto cst = val.getDefiningOp<arith::ConstantOp>())
+      if (auto intVal = mlir::dyn_cast<IntegerAttr>(cst.getValue()))
+        if (intVal.getInt() < 0 || intVal.getInt() > 255)
+          return emitOpError("all constant input values must be in [0, 255]");
+  }
+
+  return success();
+}

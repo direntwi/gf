@@ -1,29 +1,28 @@
-//For correctness:
+// //For correctness:
 
 // module {
-//   memref.global "public" @_dump_start : memref<16xi8>
 //   func.func @main() -> (i8) {
 //     // 1) Allocate memory for input and output states
 //     %state = memref.alloca() : memref<16xi8>
 //     %out   = memref.alloca() : memref<16xi8>
 
 //     // 2) Constants for the state (row-major 4x4)
-//     %c0  = arith.constant 0xd4 : i8
-//     %c1  = arith.constant 0xbf : i8
-//     %c2  = arith.constant 0x5d : i8
-//     %c3  = arith.constant 0x30 : i8
-//     %c4  = arith.constant 0xe0 : i8
-//     %c5  = arith.constant 0xb4 : i8
-//     %c6  = arith.constant 0x52 : i8
-//     %c7  = arith.constant 0xae : i8
-//     %c8  = arith.constant 0xb8 : i8
-//     %c9  = arith.constant 0x41 : i8
-//     %c10 = arith.constant 0x11 : i8
-//     %c11 = arith.constant 0xf1 : i8
-//     %c12 = arith.constant 0x1e : i8
-//     %c13 = arith.constant 0x27 : i8
-//     %c14 = arith.constant 0x98 : i8
-//     %c15 = arith.constant 0xe5 : i8
+//     %c0  = arith.constant 0xbd : i8
+//     %c1  = arith.constant 0x6e : i8
+//     %c2  = arith.constant 0x7c : i8
+//     %c3  = arith.constant 0x3d : i8
+//     %c4  = arith.constant 0xf2 : i8
+//     %c5  = arith.constant 0xb5 : i8
+//     %c6  = arith.constant 0x77 : i8
+//     %c7  = arith.constant 0x9e : i8
+//     %c8  = arith.constant 0x0b : i8
+//     %c9  = arith.constant 0x61 : i8
+//     %c10 = arith.constant 0x21 : i8
+//     %c11 = arith.constant 0x6e : i8
+//     %c12 = arith.constant 0x8b : i8
+//     %c13 = arith.constant 0x10 : i8
+//     %c14 = arith.constant 0xb6 : i8
+//     %c15 = arith.constant 0x89 : i8
 
 //     // 3) Store constants into state
 //     %i0  = arith.constant 0  : index
@@ -60,11 +59,12 @@
 //     memref.store %c14, %state[%i14] : memref<16xi8>
 //     memref.store %c15, %state[%i15] : memref<16xi8>
 
+    
 //     // 4) Loop through the 4 columns (each column has 4 rows)
 //     %c4_idx = arith.constant 4 : index
 //     scf.for %col = %i0 to %c4_idx step %i1 {
 //       %col_mem = memref.alloca() : memref<4xi8>
-//       %out_col = memref.alloca() : memref<4xi8>
+//         %out_col = memref.alloca() : memref<4xi8>
 
 //       %base = arith.muli %col, %c4_idx : index
 //       %row0 = arith.addi %base, %i0 : index
@@ -82,7 +82,7 @@
 //       memref.store %v2, %col_mem[%i2] : memref<4xi8>
 //       memref.store %v3, %col_mem[%i3] : memref<4xi8>
 
-//       gf.mix_columns %col_mem into %out_col
+//       gf.inv_mix_columns %col_mem into %out_col
 //         : memref<4xi8>, memref<4xi8>
 
 //       %o0 = memref.load %out_col[%i0] : memref<4xi8>
@@ -96,31 +96,15 @@
 //       memref.store %o3, %out[%row3] : memref<16xi8>
 
 //     }
-
-//     // 5) XOR reduction using loop-carried value
-//     %r16 = arith.constant 16 : index
-//     %zero = arith.constant 0 : i8
-//     %final = scf.for %j = %i0 to %r16 step %i1 iter_args(%acc = %zero) -> i8 {
-//       %val = memref.load %out[%j] : memref<16xi8>
-//       %new_acc = arith.xori %acc, %val : i8
-//       scf.yield %new_acc : i8
-//     }
-
-//     // After XOR loop
-//     %dump = memref.get_global @_dump_start : memref<16xi8>
-//     scf.for %k = %i0 to %r16 step %i1 {
-//       %v = memref.load %out[%k] : memref<16xi8>
-//       memref.store %v, %dump[%k] : memref<16xi8>
-//     }
-
+      
+//     %final = arith.constant 0 : i8
 //     func.return %final : i8
 //   }
 // }
 
-// For benchmarking:
 module {
   // --- Kernel: one MixColumns over a 16-byte state ---
-  func.func @mixcolumns_kernel(%state: memref<16xi8>, %out: memref<16xi8>) {
+  func.func @inv_mixcolumns_kernel(%state: memref<16xi8>, %out: memref<16xi8>) {
     %i0  = arith.constant 0  : index
     %i1  = arith.constant 1  : index
     %i2  = arith.constant 2  : index
@@ -147,7 +131,7 @@ module {
       memref.store %v2, %col_mem[%i2] : memref<4xi8>
       memref.store %v3, %col_mem[%i3] : memref<4xi8>
 
-      gf.mix_columns %col_mem into %out_col : memref<4xi8>, memref<4xi8>
+      gf.inv_mix_columns %col_mem into %out_col : memref<4xi8>, memref<4xi8>
 
       %o0 = memref.load %out_col[%i0] : memref<4xi8>
       %o1 = memref.load %out_col[%i1] : memref<4xi8>
@@ -163,7 +147,7 @@ module {
   }
 
   // --- Harness: repeat kernel N times (rolled outer loop) ---
-  func.func @bench_mixcolumns(%iters: index, %state: memref<16xi8>, %out: memref<16xi8>) -> i8 {
+  func.func @bench_inv_mixcolumns(%iters: index, %state: memref<16xi8>, %out: memref<16xi8>) -> i8 {
   %c0   = arith.constant 0 : index
   %c1   = arith.constant 1 : index
   %i0   = arith.constant 0 : index
@@ -173,7 +157,7 @@ module {
 
   %acc = scf.for %t = %c0 to %iters step %c1 iter_args(%a = %acc0) -> i8 {
     // 1) do one MixColumns
-    func.call @mixcolumns_kernel(%state, %out) : (memref<16xi8>, memref<16xi8>) -> ()
+    func.call @inv_mixcolumns_kernel(%state, %out) : (memref<16xi8>, memref<16xi8>) -> ()
 
     // 2) loop-carried dep: state <- out  (prevents loop collapse/hoist)
     scf.for %i = %i0 to %i16 step %i1 {
@@ -200,7 +184,7 @@ module {
 
 
     %iters = arith.constant 1000 : index
-  %acc   = func.call @bench_mixcolumns(%iters, %state, %out)
+  %acc   = func.call @bench_inv_mixcolumns(%iters, %state, %out)
             : (index, memref<16xi8>, memref<16xi8>) -> i8
   return %acc : i8
 
