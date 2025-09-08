@@ -88,7 +88,7 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
       if (!module)
         return rewriter.notifyMatchFailure(op, "not in a module");
 
-      // --- 1) Ensure the log/antilog globals have been injected into the module.
+      // 1) Ensure the log/antilog globals have been injected into the module.
       using GlobalOp = memref::GlobalOp;
 
       // Only inject if the module doesn’t already have a GlobalOp named “log_table”
@@ -106,17 +106,17 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
         }
       }
 
-     // --- Fetch and widen operands to i32
+     // Fetch and widen operands to i32
     Value lhs8 = op.getLhs();
     Value rhs8 = op.getRhs();
     Value lhs32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), lhs8);
     Value rhs32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), rhs8);
 
-    // --- Constants in i32
+    // Constants in i32
     Value zero32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     Value one32  = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
 
-    // --- Early checks in i32
+    // Early checks in i32
     Value lhsIsZero = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, lhs32, zero32);
     Value rhsIsZero = rewriter.create<arith::CmpIOp>(
@@ -127,7 +127,7 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
     Value rhsIsOne = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, rhs32, one32);
 
-    // --- Partial result for early cases (i32)
+    // Partial result for early cases (i32)
     Value partialResult32 = rewriter.create<arith::SelectOp>(
         loc, lhsIsOne, rhs32,
         rewriter.create<arith::SelectOp>(loc, rhsIsOne, lhs32, zero32));
@@ -135,13 +135,13 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
     Value anyEarly1 = rewriter.create<arith::OrIOp>(loc, eitherZero, lhsIsOne);
     Value anyEarly  = rewriter.create<arith::OrIOp>(loc, anyEarly1, rhsIsOne);
 
-    // --- Adjust indices for table lookup (i32)
+    // Adjust indices for table lookup (i32)
     Value lhsAdj = rewriter.create<arith::SubIOp>(loc, lhs32, one32);
     Value rhsAdj = rewriter.create<arith::SubIOp>(loc, rhs32, one32);
     Value lhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), lhsAdj);
     Value rhsIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), rhsAdj);
 
-    // --- Load tables (i8) and widen to i32
+    // Load tables (i8) and widen to i32
     auto i8Ty = rewriter.getIntegerType(8);
     Value logTable = rewriter.create<memref::GetGlobalOp>(
         loc, MemRefType::get({255}, i8Ty),
@@ -162,12 +162,12 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
     Value logValL = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), logVal8L);
   Value logValR = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), logVal8R);
 
-    // --- Sum logs and mod 255 (i32)
+    // Sum logs and mod 255 (i32)
     Value logSum = rewriter.create<arith::AddIOp>(loc, logValL, logValR);
     Value modConst32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
     Value modSum = rewriter.create<arith::RemUIOp>(loc, logSum, modConst32);
 
-    // --- Antilog lookup
+    // Antilog lookup
     Value modIdx = rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(), modSum);
     Value prodVal8 = rewriter.create<arith::SelectOp>(
         loc, anyEarly,
@@ -175,7 +175,7 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
         rewriter.create<memref::LoadOp>(loc, antiTable, modIdx));
     Value prodVal32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), prodVal8);
 
-    // --- Final select and truncate to i8
+    // Final select and truncate to i8
     Value final32 = rewriter.create<arith::SelectOp>(loc, anyEarly,
                                                    partialResult32, prodVal32);
     Value final8 = rewriter.create<arith::TruncIOp>(loc, rewriter.getI8Type(), final32);
@@ -216,20 +216,20 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
       }
     }
 
-    // --- 2) Load input and widen to i32
+    // 2) Load input and widen to i32
     Value in8   = op.getOperand();
     Value in32  = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), in8);
 
-    // --- 3) Constants in i32
+    // 3) Constants in i32
     Value zero32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     Value one32  = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
     Value c255_32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
 
-    // --- 4) Zero check
+    // 4) Zero check
     Value isZero = rewriter.create<arith::CmpIOp>(
         loc, arith::CmpIPredicate::eq, in32, zero32);
 
-    // --- 5) Compute index = (255 - logVal) mod 255
+    // 5) Compute index = (255 - logVal) mod 255
     // Subtract 1 for table index: idx = in32 - 1
     Value inAdj32 = rewriter.create<arith::SubIOp>(loc, in32, one32);
     // Cast to Index for table load
@@ -259,11 +259,11 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
     Value inv8 = rewriter.create<memref::LoadOp>(loc, antiTable, invIdx);
     Value inv32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), inv8);
 
-    // --- 6) Select: if input was zero, result = zero; else result = inv32
+    // 6) Select: if input was zero, result = zero; else result = inv32
     Value result32 = rewriter.create<arith::SelectOp>(
         loc, isZero, zero32, inv32);
 
-    // --- 7) Truncate back to i8 and replace
+    // 7) Truncate back to i8 and replace
     Value result8 = rewriter.create<arith::TruncIOp>(loc,
         rewriter.getI8Type(), result32);
     rewriter.replaceOp(op, result8);
@@ -287,7 +287,7 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
     int64_t N = op.getColsB();
     auto operands = op.getOperands();
 
-    // --- LHS (A: row-major) ---
+    // LHS (A: row-major)
     bool lhsIsMemref = mlir::isa<MemRefType>(operands[0].getType());
     int64_t numLhs = lhsIsMemref ? 1 : (M * K);
     Value memrefA = lhsIsMemref
@@ -295,7 +295,7 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
         : gf::materializeMemref(loc, rewriter,
               SmallVector<Value>(operands.begin(), operands.begin() + numLhs));
 
-    // --- RHS (B: column-major) ---
+    // RHS (B: column-major)
     bool rhsIsMemref = mlir::isa<MemRefType>(operands[numLhs].getType());
     int64_t numRhs = rhsIsMemref ? 1 : (K * N);
     Value memrefB = rhsIsMemref
@@ -304,10 +304,10 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
               SmallVector<Value>(operands.begin() + numLhs,
                                  operands.begin() + numLhs + numRhs));
 
-    // --- Output (C: column-major) ---
+    // Output (C: column-major)
     Value memrefC = operands[numLhs + numRhs];
 
-    // --- Constants ---
+    // Constants
     auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     auto cK = rewriter.create<arith::ConstantIndexOp>(loc, K);
@@ -371,9 +371,9 @@ struct GFSBoxOpLowering : public OpRewritePattern<gf::SBoxOp> {
     using GlobalOp = memref::GlobalOp;
 
     // 1) Inject lookup‑table if missing
-    if (!module.lookupSymbol<GlobalOp>("sbox_table")) {
+    if (!module.lookupSymbol<GlobalOp>("sbox")) {
       auto lookupM = parseSourceString<ModuleOp>(
-          kSBoxLookupTable, rewriter.getContext());
+          kSBox, rewriter.getContext());
       if (!lookupM) return failure();
       SymbolTable symtab(module);
       for (auto glob : lookupM->getOps<GlobalOp>()) {
@@ -389,7 +389,7 @@ struct GFSBoxOpLowering : public OpRewritePattern<gf::SBoxOp> {
     Value tableMemref = rewriter.create<memref::GetGlobalOp>(
       loc,
       MemRefType::get({256}, rewriter.getI8Type()),
-      "sbox_table"
+      "sbox"
     );
 
     // 3) Cast the input byte to index:
@@ -674,6 +674,159 @@ struct GFShiftRowsOpLowering : OpRewritePattern<gf::ShiftRowsOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// InvSBoxOp
+//===----------------------------------------------------------------------===//
+
+struct GFInvSBoxOpLowering : public OpRewritePattern<gf::InvSBoxOp> {
+  using OpRewritePattern<gf::InvSBoxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::InvSBoxOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto module = op->getParentOfType<ModuleOp>();
+
+    // 1) Ensure sbox_table is in the module:
+    using GlobalOp = memref::GlobalOp;
+
+    // 1) Inject lookup‑table if missing
+    if (!module.lookupSymbol<GlobalOp>("inv_sbox")) {
+      auto lookupM = parseSourceString<ModuleOp>(
+          kInvSBox, rewriter.getContext());
+      if (!lookupM) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : lookupM->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
+
+    // 2) Get the memref:
+    Value tableMemref = rewriter.create<memref::GetGlobalOp>(
+      loc,
+      MemRefType::get({256}, rewriter.getI8Type()),
+      "inv_sbox"
+    );
+
+    // 3) Cast the input byte to index:
+    Value idx = rewriter.create<arith::IndexCastUIOp>(
+      loc,
+      rewriter.getIndexType(),
+      op.getInput()
+    );
+
+    // 4) Load the substituted value:
+    Value out = rewriter.create<memref::LoadOp>(
+      loc,
+      tableMemref,
+      idx
+    );
+
+    rewriter.replaceOp(op, out);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// InvSBoxOp
+//===----------------------------------------------------------------------===//
+
+struct GFInvShiftRowsOpLowering : OpRewritePattern<gf::InvShiftRowsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::InvShiftRowsOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value state = op.getState();
+
+    // Load all 16 bytes
+    SmallVector<Value, 16> src(16);
+    for (int i = 0; i < 16; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      src[i] = rewriter.create<memref::LoadOp>(loc, state, idx);
+    }
+
+    // Inverse ShiftRows mapping
+    static const int kInvMap[16] = {
+      0,13,10,7, 4,1,14,11, 8,5,2,15, 12,9,6,3
+    };
+
+    for (int i = 0; i < 16; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      rewriter.create<memref::StoreOp>(loc, src[kInvMap[i]], state, idx);
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// InvMixColumnsOp
+//===----------------------------------------------------------------------===//
+
+struct GFInvMixColumnsOpLowering : public OpRewritePattern<gf::InvMixColumnsOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(gf::InvMixColumnsOp op,
+                                PatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value colMemRef = op.getCol();
+    Value outMemRef = op.getOut();
+
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module)
+      return rewriter.notifyMatchFailure(op, "not inside a module");
+
+    using GlobalOp = memref::GlobalOp;
+
+    // Ensure the inverse matrix global exists (readonly)
+    if (!module.lookupSymbol<GlobalOp>("aes_inv_mix_columns_matrix")) {
+      auto matrixModule = parseSourceString<ModuleOp>(
+          kAESInvMixColumnsMatrix, rewriter.getContext());
+      if (!matrixModule) return failure();
+      SymbolTable symtab(module);
+      for (auto glob : matrixModule->getOps<GlobalOp>()) {
+        if (!module.lookupSymbol<GlobalOp>(glob.getSymName())) {
+          OpBuilder::InsertionGuard g(rewriter);
+          rewriter.setInsertionPointToEnd(module.getBody());
+          rewriter.clone(*glob.getOperation());
+        }
+      }
+    }
+
+    // Get matrix base pointer
+    Value mat = rewriter.create<memref::GetGlobalOp>(
+        loc, MemRefType::get({16}, rewriter.getI8Type()),
+        "aes_inv_mix_columns_matrix");
+
+    // Load 4-byte column
+    SmallVector<Value, 4> colValues;
+    for (int i = 0; i < 4; ++i) {
+      Value idx = rewriter.create<arith::ConstantIndexOp>(loc, i);
+      colValues.push_back(rewriter.create<memref::LoadOp>(loc, colMemRef, idx));
+    }
+
+    // Reuse the same MatMul signature as forward MixColumns:
+    rewriter.create<gf::MatMulOp>(
+        loc,
+        /*lhs=*/ValueRange{mat},
+        /*rhs=*/colValues,
+        /*output=*/outMemRef,
+        /*M=*/rewriter.getI8IntegerAttr(4),
+        /*N=*/rewriter.getI8IntegerAttr(4),
+        /*K=*/rewriter.getI8IntegerAttr(1));
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+
+
 
 //===----------------------------------------------------------------------===//
 // ConvertGFToArithPass
@@ -706,7 +859,8 @@ struct ConvertGFToArithPass
     target.addIllegalOp<
       gf::AddOp, gf::MulOp, gf::InvOp, gf::MatMulOp,
       gf::SBoxOp, gf::MixColumnsOp, gf::KeyScheduleOp,
-      gf::AddRoundKeyOp, gf::ShiftRowsOp
+      gf::AddRoundKeyOp, gf::ShiftRowsOp, gf::InvSBoxOp,
+      gf::InvShiftRowsOp, gf::InvMixColumnsOp
     >();
 
     RewritePatternSet patterns(&ctx);
@@ -719,15 +873,21 @@ struct ConvertGFToArithPass
     GFMixColumnsOpLowering,
     GFKeyScheduleOpLowering,
     GFAddRoundKeyOpLowering,
-    GFShiftRowsOpLowering>(&ctx);
+    GFShiftRowsOpLowering,
+    GFInvSBoxOpLowering,
+    GFInvShiftRowsOpLowering,
+    GFInvMixColumnsOpLowering>(&ctx);
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
       signalPassFailure();
 
+    // Second nested rewrite pattern set to ensure SBoxOp lowering, especially in KeyScheduleOp
     RewritePatternSet nestedPatterns(&ctx);
     nestedPatterns.add<GFSBoxOpLowering>(&ctx);
+    nestedPatterns.add<GFInvSBoxOpLowering>(&ctx);
     ConversionTarget nestedTarget(ctx);
     nestedTarget.addIllegalOp<gf::SBoxOp>();
+    nestedTarget.addIllegalOp<gf::InvSBoxOp>();
     nestedTarget.addLegalDialect<arith::ArithDialect>();
     nestedTarget.addLegalDialect<memref::MemRefDialect>();
     nestedTarget.addLegalDialect<scf::SCFDialect>();
