@@ -2,6 +2,13 @@
 #define GF_UTILS_H
 
 #include "llvm/ADT/StringRef.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
+
 
 namespace mlir::gf {
 inline constexpr llvm::StringLiteral kLogAntilogTables = R"mlir(
@@ -114,16 +121,16 @@ inline constexpr llvm::StringLiteral kAESShiftRowsMatrix = R"mlir(
 )mlir";
 
 // Allocates a 1D memref<i8> and stores the given values into it.
-inline Value materializeMemref(Location loc, PatternRewriter &rewriter, ArrayRef<Value> values) {
-  auto memType = MemRefType::get({(int64_t)values.size()}, rewriter.getI8Type());
-  Value mem = rewriter.create<memref::AllocOp>(loc, memType);
+inline mlir::Value materializeMemref(mlir::Location loc, mlir::PatternRewriter &rewriter, ArrayRef<Value> values) {
+  auto memType = mlir::MemRefType::get({(int64_t)values.size()}, rewriter.getI8Type());
+  mlir::Value mem = rewriter.create<memref::AllocOp>(loc, memType);
 
   for (auto [idx, v] : llvm::enumerate(values)) {
-    Value cIdx = rewriter.create<arith::ConstantIndexOp>(loc, idx);
-    rewriter.create<memref::StoreOp>(loc, v, mem, ValueRange{cIdx});
+    mlir::Value cIdx = rewriter.create<arith::ConstantIndexOp>(loc, idx);
+    rewriter.create<memref::StoreOp>(loc, v, mem, mlir::ValueRange{cIdx});
   }
   return mem;
   }
-} // namespace gf
+} // namespace mlir::gf
 
 #endif // GF_UTILS_H
