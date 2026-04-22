@@ -5,17 +5,15 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Rewrite/FrozenRewritePatternSet.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Parser/Parser.h"
-#include "mlir/Conversion/Passes.h"
-
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Rewrite/FrozenRewritePatternSet.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "GF/GFPasses.h"
 #include "GF/GFUtils.h"
@@ -51,7 +49,6 @@ public:
       signalPassFailure();
   }
 };
-} // namespace
 
 //===----------------------------------------------------------------------===//
 // AddOp
@@ -95,6 +92,7 @@ struct GFMulOpLowering : public OpRewritePattern<gf::MulOp> {
       if (!module.lookupSymbol<GlobalOp>("log_table")) {
         auto lookupM = parseSourceString<ModuleOp>(kLogAntilogTables, rewriter.getContext());
         if (!lookupM) return failure();
+        
         SymbolTable symTable(module);
         // 1) Clone all memref.global @log_table / @antilog_table
         for (auto glob : lookupM->getOps<GlobalOp>()) {
@@ -223,7 +221,7 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
     // 3) Constants in i32
     Value zero32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     Value one32  = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
-    Value c255_32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
+    Value mask32 = rewriter.create<arith::ConstantIntOp>(loc, 255, 32);
 
     // 4) Zero check
     Value isZero = rewriter.create<arith::CmpIOp>(
@@ -245,9 +243,9 @@ struct GFInvOpLowering : public OpRewritePattern<gf::InvOp> {
     Value log32 = rewriter.create<arith::ExtUIOp>(loc, rewriter.getI32Type(), log8);
 
     // Compute diff = (255 - log32)
-    Value diff32 = rewriter.create<arith::SubIOp>(loc, c255_32, log32);
+    Value diff32 = rewriter.create<arith::SubIOp>(loc, mask32, log32);
     // Mod 255: invIdx32 = diff32 % 255
-    Value invIdx32 = rewriter.create<arith::RemUIOp>(loc, diff32, c255_32);
+    Value invIdx32 = rewriter.create<arith::RemUIOp>(loc, diff32, mask32);
     // Cast to Index for antilog lookup
     Value invIdx = rewriter.create<arith::IndexCastOp>(loc,
         rewriter.getIndexType(), invIdx32);
@@ -282,73 +280,84 @@ struct GFMatMulOpLowering : OpRewritePattern<gf::MatMulOp> {
                               PatternRewriter &rewriter) const override {
     Location loc = op.getLoc();
 
-    int64_t M = op.getRowsA();
-    int64_t K = op.getColsA();
-    int64_t N = op.getColsB();
+    int64_t mDim = op.getRowsA();
+    int64_t kDim = op.getColsA();
+    int64_t nDim = op.getColsB();
+
     auto operands = op.getOperands();
 
-    // LHS (A: row-major)
-    bool lhsIsMemref = mlir::isa<MemRefType>(operands[0].getType());
-    int64_t numLhs = lhsIsMemref ? 1 : (M * K);
-    Value memrefA = lhsIsMemref
+    bool lhsIsMemref = isa<MemRefType>(operands[0].getType());
+    int64_t numLhs = lhsIsMemref ? 1 : (mDim * kDim);
+    Value a = lhsIsMemref
         ? operands[0]
         : gf::materializeMemref(loc, rewriter,
               SmallVector<Value>(operands.begin(), operands.begin() + numLhs));
 
-    // RHS (B: column-major)
-    bool rhsIsMemref = mlir::isa<MemRefType>(operands[numLhs].getType());
-    int64_t numRhs = rhsIsMemref ? 1 : (K * N);
-    Value memrefB = rhsIsMemref
+    bool rhsIsMemref = isa<MemRefType>(operands[numLhs].getType());
+    int64_t numRhs = rhsIsMemref ? 1 : (kDim * nDim);
+    Value b = rhsIsMemref
         ? operands[numLhs]
         : gf::materializeMemref(loc, rewriter,
               SmallVector<Value>(operands.begin() + numLhs,
-                                 operands.begin() + numLhs + numRhs));
+                                operands.begin() + numLhs + numRhs));
 
-    // Output (C: column-major)
-    Value memrefC = operands[numLhs + numRhs];
+    Value c = operands[numLhs + numRhs];
 
-    // Constants
-    auto c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    auto c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
-    auto cK = rewriter.create<arith::ConstantIndexOp>(loc, K);
-    auto cM = rewriter.create<arith::ConstantIndexOp>(loc, M);
+    // --- Constants ---
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value cM = rewriter.create<arith::ConstantIndexOp>(loc, mDim);
+    Value cK = rewriter.create<arith::ConstantIndexOp>(loc, kDim);
+    Value cN = rewriter.create<arith::ConstantIndexOp>(loc, nDim);
     Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 8);
 
-    // Unrolled i,j with a k-loop
-    for (int64_t i = 0; i < M; ++i) {
-      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
-      for (int64_t j = 0; j < N; ++j) {
-        Value jVal = rewriter.create<arith::ConstantIndexOp>(loc, j);
+    // --- for (j) ---
+    auto jLoop = rewriter.create<scf::ForOp>(loc, c0, cN, c1);
+    rewriter.setInsertionPointToStart(jLoop.getBody());
+    Value j = jLoop.getInductionVar();
 
-        auto loop = rewriter.create<scf::ForOp>(loc, c0, cK, c1, ValueRange{zero});
-        rewriter.setInsertionPointToStart(loop.getBody());
+    // Hoist: K * j
+    Value kj = rewriter.create<arith::MulIOp>(loc, cK, j);
+    // Hoist: M * j
+    Value mj = rewriter.create<arith::MulIOp>(loc, cM, j);
 
-        Value k   = loop.getInductionVar();
-        Value acc = loop.getRegionIterArgs()[0];
+    // --- for (i) ---
+    auto iLoop = rewriter.create<scf::ForOp>(loc, c0, cM, c1);
+    rewriter.setInsertionPointToStart(iLoop.getBody());
+    Value i = iLoop.getInductionVar();
 
-        // A[i*K + k] (row-major)
-        Value aIdx = rewriter.create<arith::AddIOp>(
-            loc, rewriter.create<arith::MulIOp>(loc, iVal, cK), k);
-        Value lhs = rewriter.create<memref::LoadOp>(loc, memrefA, ValueRange{aIdx});
+    // Hoist: i * K
+    Value iK = rewriter.create<arith::MulIOp>(loc, i, cK);
 
-        // B[k + K*j] (column-major)
-        Value Kj   = rewriter.create<arith::MulIOp>(loc, cK, jVal);
-        Value bIdx = rewriter.create<arith::AddIOp>(loc, k, Kj);
-        Value rhs  = rewriter.create<memref::LoadOp>(loc, memrefB, ValueRange{bIdx});
+    // --- for (k) with accumulator ---
+    auto kLoop = rewriter.create<scf::ForOp>(
+        loc, c0, cK, c1, ValueRange{zero});
+    rewriter.setInsertionPointToStart(kLoop.getBody());
 
-        Value prod   = rewriter.create<gf::MulOp>(loc, lhs, rhs);
-        Value newAcc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
-        rewriter.create<scf::YieldOp>(loc, newAcc);
+    Value k = kLoop.getInductionVar();
+    Value acc = kLoop.getRegionIterArgs()[0];
 
-        rewriter.setInsertionPointAfter(loop);
-        Value result = loop.getResult(0);
+    // A[i*K + k]
+    Value aIdx = rewriter.create<arith::AddIOp>(loc, iK, k);
+    Value lhs  = rewriter.create<memref::LoadOp>(loc, a, ValueRange{aIdx});
 
-        // C[i + M*j] (column-major)
-        Value Mj   = rewriter.create<arith::MulIOp>(loc, cM, jVal);
-        Value outIdx = rewriter.create<arith::AddIOp>(loc, iVal, Mj);
-        rewriter.create<memref::StoreOp>(loc, result, memrefC, ValueRange{outIdx});
-      }
-    }
+    // B[k + K*j]
+    Value bIdx = rewriter.create<arith::AddIOp>(loc, k, kj);
+    Value rhs = rewriter.create<memref::LoadOp>(loc, b, ValueRange{bIdx});
+
+    // Multiply + accumulate
+    Value prod = rewriter.create<gf::MulOp>(loc, lhs, rhs);
+    Value newAcc = rewriter.create<arith::XOrIOp>(loc, acc, prod);
+
+    rewriter.create<scf::YieldOp>(loc, newAcc);
+
+    // --- after k loop ---
+    rewriter.setInsertionPointAfter(kLoop);
+    Value result = kLoop.getResult(0);
+
+    // C[i + M*j]
+    Value outIdx = rewriter.create<arith::AddIOp>(loc, i, mj);
+    rewriter.create<memref::StoreOp>(loc, result, c, ValueRange{outIdx});
 
     rewriter.eraseOp(op);
     return success();
@@ -751,7 +760,8 @@ struct GFInvShiftRowsOpLowering : OpRewritePattern<gf::InvShiftRowsOp> {
 
     // Inverse ShiftRows mapping
     static const int kInvMap[16] = {
-      0,13,10,7, 4,1,14,11, 8,5,2,15, 12,9,6,3
+      0,13,10,7, 4,1,14,11, 8,5,
+      2,15, 12,9,6,3
     };
 
     for (int i = 0; i < 16; ++i) {
@@ -846,10 +856,7 @@ struct ConvertGFToArithPass
   }
 
   void runOnOperation() override {
-    MLIRContext &ctx = getContext();
-    ModuleOp module = getOperation();
-
-    
+    MLIRContext &ctx = getContext();    
     
     ConversionTarget target(ctx);
     target.addIllegalDialect<gf::GFDialect>();
@@ -896,6 +903,8 @@ struct ConvertGFToArithPass
       signalPassFailure();
   }
 };
+
+} // namespace
 
 std::unique_ptr<Pass> createConvertGFToArithPass() { 
   return std::make_unique<ConvertGFToArithPass>();
